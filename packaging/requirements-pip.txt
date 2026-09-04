@@ -1,0 +1,12 @@
+# DockStudio pip-only requirements (Linux/macOS 快速安装; Windows 若 pip 安装 PyMOL 失败请用 conda 方案)
+numpy>=1.24
+scipy>=1.9
+pandas>=1.5
+pillow>=9.0
+rdkit>=2023.9
+gemmi>=0.6
+openbabel>=3.1
+meeko>=0.5
+vina==1.2.7
+plip>=2.3
+pymol-open-source>=3.0

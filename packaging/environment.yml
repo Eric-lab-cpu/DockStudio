@@ -1,0 +1,26 @@
+# DockStudio 完整依赖环境 (conda-forge)
+# 用法:
+#   conda env create -f packaging/environment.yml
+#   conda activate dockstudio
+#   python -m dockstudio
+name: dockstudio
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.10
+  - numpy>=1.24
+  - scipy>=1.9
+  - pandas>=1.5
+  - pillow>=9.0
+  - rdkit>=2023.9
+  - gemmi>=0.6
+  - prody>=2.4
+  - openbabel>=3.1
+  - pymol-open-source>=3.0
+  - meeko>=0.5
+  - plip>=2.3
+  - conda-pack>=0.7      # 用于生成绿色免安装目录
+  - pip
+  - pip:
+      - vina==1.2.7       # AutoDock Vina python bindings

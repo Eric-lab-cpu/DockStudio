@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+*.log
+
+# Build / distribution
+dist/
+
+# Example run output (large, generated)
+examples/demo_out/
+
+# Bundled Windows binaries used only to build the installer
+# (micromamba.exe / vina.exe / vcrt dlls). Re-fetch per packaging/打包说明.md
+packaging/online_installer/runtime/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

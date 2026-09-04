@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dockstudio"
+version = "1.0.0"
+description = "DockStudio by Eric Studio - one-stop reproducible batch molecular docking GUI toolkit (AutoDock Vina / Meeko / RDKit / PLIP / PyMOL)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Eric Studio" }]
+dependencies = [
+    "numpy>=1.24",
+    "pandas>=1.5",
+    "scipy>=1.9",
+    "pillow>=9.0",
+    "rdkit>=2023.9",
+    "gemmi>=0.6",
+    "prody>=2.4",
+    "meeko>=0.5",
+    "vina>=1.2.5",
+    "plip>=2.3",
+]
+
+[project.gui-scripts]
+dockstudio = "dockstudio.gui.app:main"
+
+[tool.setuptools.packages.find]
+include = ["dockstudio*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

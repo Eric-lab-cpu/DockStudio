@@ -1,0 +1,13 @@
+<Configuration>
+  <!-- Disable GPU acceleration inside the Sandbox.
+       Fixes the "all-black window" caused by incompatible vGPU/host GPU drivers.
+       Trade-off: desktop is rendered in software (a bit slower, but works). -->
+  <vGPU>disable</vGPU>
+
+  <Networking>Enable</Networking>
+
+  <!-- Give the sandbox a bit more headroom (adjust as needed).
+       Must be <= your free RAM. -->
+  <MemoryInMB>4096</MemoryInMB>
+  <CPUs>2</CPUs>
+</Configuration>
