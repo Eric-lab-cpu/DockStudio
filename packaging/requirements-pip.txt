@@ -10,3 +10,4 @@ meeko>=0.5
 vina==1.2.7
 plip>=2.3
 pymol-open-source>=3.0
+ttkbootstrap>=1.10

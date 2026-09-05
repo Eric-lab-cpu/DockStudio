@@ -157,6 +157,7 @@ def prepare_receptor(
         "log": log,
         "atom_counts": atom_counts,
         "deleted_bad_residues": [{"chain": c, "resseq": s} for (c, s) in deleted_bad],
+        "clean_warnings": list(action.warnings),
         "n_atoms_pdbqt": sum(atom_counts.values()),
     }
 

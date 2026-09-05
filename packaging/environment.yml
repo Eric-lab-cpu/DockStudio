@@ -20,6 +20,7 @@ dependencies:
   - pymol-open-source>=3.0
   - meeko>=0.5
   - plip>=2.3
+  - ttkbootstrap>=1.10   # 现代 GUI 主题
   - conda-pack>=0.7      # 用于生成绿色免安装目录
   - pip
   - pip:

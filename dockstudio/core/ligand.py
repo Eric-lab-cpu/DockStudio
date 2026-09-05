@@ -104,34 +104,47 @@ def analyze_molecule(mol: Chem.Mol, name: str, source: str, index: int) -> Ligan
     return entry
 
 
+# Simple-rule protonation cut-offs (v1.1). These are deliberately crude and
+# documented - they are NOT a pKa predictor:
+#   carboxyl acids  (R-COOH, pKa ~4.5)  -> deprotonated when pH  >= 5.0
+#   basic N (aliphatic amine, conj-acid pKa ~9-10) -> protonated when pH <= 8.5
+# Within the physiological range used for docking this reproduces the dominant
+# protomer; at pH values near a group's pKa the true population is a mixture and
+# this single-protomer approximation is disclosed in every report.
+_CARBOXYL_DEPROTONATE_PH = 5.0
+_BASIC_N_PROTONATE_PH = 8.5
+
+
 def apply_ph_rules(mol: Chem.Mol, ph: float) -> Chem.Mol:
-    """Documented simple pH-7.4 rules (see report; no pKa predictor used)."""
+    """Documented simple pH rules (see report; no pKa predictor used)."""
     mol = Chem.Mol(mol)
     Chem.SanitizeMol(mol)
     notes = []
-    for sm in (_CARBOXYL,):
-        for m in mol.GetSubstructMatches(sm):
+    if ph >= _CARBOXYL_DEPROTONATE_PH:
+        for m in mol.GetSubstructMatches(_CARBOXYL):
             ox = mol.GetAtomWithIdx(m[1])
             h = [a for a in ox.GetNeighbors() if a.GetSymbol() == "H"]
             for a in h:
                 mol.RemoveAtom(a.GetIdx())
             if h:
-                notes.append("carboxyl deprotonated (COO-)")
+                notes.append(f"carboxyl deprotonated (COO-) [pH {ph} >= {_CARBOXYL_DEPROTONATE_PH:g}]")
     mol.UpdatePropertyCache()
     seen = set()
-    for sm in (_BASIC_N, _BASIC_N_RING):
-        for m in mol.GetSubstructMatches(sm):
-            if m[0] in seen:
-                continue
-            seen.add(m[0])
-            a = mol.GetAtomWithIdx(m[0])
-            a.SetNoImplicit(False)
-            a.SetNumExplicitHs(a.GetTotalNumHs() + 1)
-            a.SetFormalCharge(1)
-        if seen and sm is _BASIC_N:
-            break
+    if ph <= _BASIC_N_PROTONATE_PH:
+        for sm in (_BASIC_N, _BASIC_N_RING):
+            for m in mol.GetSubstructMatches(sm):
+                if m[0] in seen:
+                    continue
+                seen.add(m[0])
+                a = mol.GetAtomWithIdx(m[0])
+                a.SetNoImplicit(False)
+                a.SetNumExplicitHs(a.GetTotalNumHs() + 1)
+                a.SetFormalCharge(1)
+            if seen and sm is _BASIC_N:
+                # Only try ring amines if no aliphatic basic N was handled.
+                break
     if seen:
-        notes.append("basic aliphatic amine protonated (+N)")
+        notes.append(f"basic amine protonated (+N) [pH {ph} <= {_BASIC_N_PROTONATE_PH:g}]")
     Chem.SanitizeMol(mol)
     mol.SetProp("_DockStudio_ph", f"{ph}")
     mol.SetProp("_DockStudio_ph_notes", "; ".join(notes) or "no simple-rule protonation applied")

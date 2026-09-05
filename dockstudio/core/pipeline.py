@@ -5,9 +5,9 @@ from __future__ import annotations
 import os
 from typing import Callable, Dict, List, Optional
 
-from . import (batch, box as boxmod, cofactor, docking, envinfo, interactions,
-               inventory, ligand, models, qc, ranking, receptor, reports,
-               selfdock, structure as st, utils, visualize)
+from . import (accuracy, batch, box as boxmod, cofactor, docking, envinfo,
+               interactions, inventory, ligand, models, qc, ranking, receptor,
+               reports, selfdock, structure as st, utils, visualize)
 from .models import BoxDef, RunConfig, project_subdirs
 
 LogCb = Optional[Callable[[str], None]]
@@ -106,7 +106,10 @@ class Pipeline:
                     "source": rec["path"], "atom_counts": pr["atom_counts"],
                     "n_atoms_pdbqt": pr["n_atoms_pdbqt"],
                     "deleted_bad": pr["deleted_bad_residues"],
+                    "clean_warnings": pr.get("clean_warnings") or [],
                 }
+                for w in pr.get("clean_warnings") or []:
+                    self._log(f"[prepare] receptor {nm} WARNING: {w}")
             except Exception as e:
                 self._log(f"[prepare] receptor {nm} FAILED: {e}")
                 raise
@@ -220,7 +223,9 @@ class Pipeline:
                     chain=found["chain"], resseq=found.get("ligand_resseq"),
                     name=f"{nm}_{lig_ref}")
                 self._log(f"[cocrystal] {nm}: {lig_ref} SDF ok "
-                          f"(ccd centroid dev {stats.get('ccd_centroid_dev_A')} A)")
+                          f"(heavy coverage vs CCD "
+                          f"{stats.get('heavy_coverage_local_vs_ccd')}; "
+                          f"sanitized={stats.get('sanitized')})")
                 # prepare pdbqt from this SDF
                 lig_out_dir = os.path.join(self.sub["prepared_ligands"], "cocrystal")
                 os.makedirs(lig_out_dir, exist_ok=True)
@@ -436,6 +441,12 @@ class Pipeline:
             except Exception:
                 pass
         reports.write_receptor_protocol(self.cfg, self.out, selfdock_rows)
+        # optional docking-accuracy assessment report (v1.1) - written before
+        # README / directory tree so those listings include the new files.
+        accuracy_summary = None
+        if self.cfg.run_accuracy_report:
+            accuracy_summary = accuracy.build_accuracy_report(self.cfg, self.out,
+                                                              log=self._log)
         reports.write_methods_report(self.cfg, self.out, env, {}, self.boxes, self.receptors)
         reports.write_quality_report(self.cfg, self.out, checks)
         reports.write_readme(self.out, self.cfg, env)
@@ -443,7 +454,7 @@ class Pipeline:
         tree = reports.directory_tree(self.out, maxdepth=4)
         with open(os.path.join(self.sub["reports"], "directory_tree.txt"), "w", encoding="utf-8") as fh:
             fh.write(tree)
-        return {"checks": checks}
+        return {"checks": checks, "accuracy": accuracy_summary}
 
 
 def run_project(cfg: RunConfig, on_log: LogCb = None, on_progress: ProgCb = None,

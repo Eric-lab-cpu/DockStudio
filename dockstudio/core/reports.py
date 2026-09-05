@@ -75,10 +75,14 @@ def write_methods_report(cfg, out_dir: str, env: dict, inventory_summary: dict,
                  f"deleted_bad_residues={p.get('deleted_bad_residues')}")
         for d in (p.get("deleted_bad") or []):
             L.append(f"  - 删除不完整残基(距位点>10 A): {d}")
+        for w in (p.get("clean_warnings") or []):
+            L.append(f"  - 清洗提示(如实记录): {w}")
     L.append("\n## 5. 对接参数\n")
     L.append(f"- Vina scoring: `vina`; screening exhaustiveness={cfg.exhaustiveness}; "
              f"refinement exhaustiveness={cfg.refine_exhaustiveness}; n_poses={cfg.n_poses}; "
              f"energy_range={cfg.energy_range}; Top-K={cfg.top_k}")
+    L.append(f"- 配体质子化: 文档化简单规则,目标 pH={cfg.ph}(羧酸 pH≥5 去质子化;"
+             f"碱性胺 pH≤8.5 质子化)。非 pKa 预测,见质量评估报告局限。")
     L.append("- 随机种子: 每对 `crc32('<receptor>|<ligand>') & 0x7fffffff`(写入各 result.json)")
     L.append(f"- 批处理: 断点续跑(done.flag), 幂等续跑; cpu={cfg.cpu}")
     L.append("\n## 6. 完成的对接任务\n")
@@ -87,7 +91,8 @@ def write_methods_report(cfg, out_dir: str, env: dict, inventory_summary: dict,
     L.append("\n### 初筛 mode-1 结合能矩阵\n")
     L.append(_fmt_rows_csv(os.path.join(out_dir, "results", "screening_matrix.csv")))
     L.append("\n### 最终 Top-K\n")
-    L.append(_fmt_rows_csv(os.path.join(out_dir, "results", "final_top5.csv")))
+    L.append(_fmt_rows_csv(os.path.join(out_dir, "results",
+                                        f"final_top{cfg.top_k}.csv")))
     L.append("\n## 7. 回贴验证(Self-docking)\n")
     L.append(_fmt_rows_csv(os.path.join(out_dir, "results", "selfdock_summary.csv")))
     L.append("\n## 8. 相互作用分析\n")
@@ -105,6 +110,31 @@ def write_methods_report(cfg, out_dir: str, env: dict, inventory_summary: dict,
     return path
 
 
+def _selfdock_pass_details(out_dir: str) -> List[str]:
+    """Read selfdock_summary.json (if present) into human lines."""
+    sd_path = os.path.join(out_dir, "results", "selfdock_summary.json")
+    if not os.path.exists(sd_path):
+        return []
+    try:
+        rows = utils.read_json(sd_path).get("selfdock", [])
+    except Exception:
+        return []
+    out = []
+    for r in rows:
+        rmsd = r.get("mode1_rmsd")
+        if rmsd is None:
+            continue
+        try:
+            rmsd = float(rmsd)
+            ok = rmsd <= 2.0
+        except (TypeError, ValueError):
+            ok = None
+        state = "PASS" if ok else ("FAIL" if ok is False else "n/a")
+        out.append(f"receptor {r.get('receptor')} ({r.get('cocrystal_ligand', '')}): "
+                   f"self-dock mode-1 RMSD = {rmsd} A -> {state}")
+    return out
+
+
 def write_quality_report(cfg, out_dir: str, checks: List[dict],
                          selfdock_rows: Optional[list] = None) -> str:
     sub = project_subdirs(out_dir)
@@ -114,24 +144,31 @@ def write_quality_report(cfg, out_dir: str, checks: List[dict],
     L.append("\n## 1. 自动一致性检查\n")
     for c in checks:
         L.append(f"- [{'x' if c['ok'] else ' '}] {c['check']}: {c['detail']}")
-    L.append("\n## 2. 已发现并修正的错误\n")
+    sd_lines = _selfdock_pass_details(out_dir)
+    if sd_lines:
+        L.append("\n## 2. 共晶配体回贴(self-dock)一致性\n")
+        L.extend("- " + x for x in sd_lines)
+        L.append("\n> 阈值:mode-1 RMSD <= 2.0 A 视为通过。RMSD 为同一笛卡尔坐标系下"
+                 "重原子匹配(无重新叠加),见 `03_accuracy_assessment.md`。")
+    L.append("\n## 3. 已发现并修正的错误\n")
     L.append("- 以实际工作日志为准;本报告列出已知记录缺口,不做虚构。")
-    L.append("\n## 3. 记录缺口(如存在)\n")
+    L.append("\n## 4. 记录缺口(如存在)\n")
     gaps = []
     if not os.path.exists(os.path.join(out_dir, "results", "plip", "plip_interactions_all.csv")):
         gaps.append("PLIP 交互表缺失(可能 PLIP 不可用或阶段被关闭)。")
     if not checks:
         gaps.append("未执行自动一致性检查。")
     L.append("\n".join("- " + g for g in gaps) if gaps else "- 无。")
-    L.append("\n## 4. 科学局限\n")
+    L.append("\n## 5. 科学局限\n")
     L.append("- Vina 打分函数的已知噪声(~0.5-1 kcal/mol);名次差 <0.1 kcal/mol 的命中不应过度解读。")
-    L.append("- 质子化为文档化简单规则(pH 7.4 手动规则),未使用 pKa 预测工具;手性与质子化态假设需人工复核。")
+    L.append(f"- 质子化为文档化简单规则(目标 pH {cfg.ph};羧酸 pH≥5 去质子、碱性胺 "
+             f"pH≤8.5 质子化),未使用 pKa 预测工具;手性/互变异构/关键可电离基团需人工复核。")
     L.append("- 无共晶配体受体的对接为探索性,回贴验证不适用,假阳性风险高。")
     L.append("- 图片未经人工目视终审;发布前应检查 PyMOL 渲染与结合模式合理性。")
-    L.append("\n## 5. 不宜过度解读的结果\n")
+    L.append("\n## 6. 不宜过度解读的结果\n")
     L.append("- 被标记为 `screening-fallback` 的最终 Top-K 条目(精修失败时);")
     L.append("- 无共晶配体受体(exploratory/blind)的全部结果;")
-    L.append("- 距离阈值 >2.0 A 的回贴 RMSD 受体上的所有排序。")
+    L.append("- 回贴 mode-1 RMSD > 2.0 A 受体上的所有排序(打分/姿态未被实验几何验证)。")
     L.append(f"\n---\n\n{BRAND} · {COPYRIGHT_CN}")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
@@ -190,15 +227,18 @@ def write_readme(out_dir: str, cfg, env: dict) -> str:
         "- `docking/*/result.json`:每对初筛结果(含种子、盒子、affinities)",
         "- `refine/*/result.json`:精修结果",
         "- `results/screening_matrix.csv`:受体 x 配体初筛结合能矩阵",
-        "- `results/final_top5.csv` + `_final_top5.json`:最终 Top-K",
+        "- " + "`results/final_top" + str(cfg.top_k) + ".csv` + `_final_top" + str(cfg.top_k) + ".json`:最终 Top-K",
         "- `results/selfdock_summary.csv`:共晶配体回贴 RMSD",
+        "- `reports/accuracy_assessment.csv` + `reports/03_accuracy_assessment.md`:"
+        "对接准确性评估报告(如启用)",
         "- `results/plip/plip_interactions_all.csv`:相互作用表",
         "- `results/3D_poses/*.png`,`results/composite/*.png`,`results/topK_panels/*.png`:图件",
         "- `results/pymol_data/*/scene.pml` + `complex.pdb`:可编辑 ASCII PyMOL 源",
         "- `results/pse/*.pse`:PyMOL 会话(如启用)",
         "- `reports/`:方法与质量报告",
         "",
-        "详细方法见 `reports/01_methods_report.md`;质量评估见 `reports/02_quality_assessment.md`。",
+        "详细方法见 `reports/01_methods_report.md`;质量评估见 `reports/02_quality_assessment.md`;",
+        "对接准确性评估(启用时)见 `reports/03_accuracy_assessment.md`。",
         "",
     ]
     with open(path, "w", encoding="utf-8") as fh:

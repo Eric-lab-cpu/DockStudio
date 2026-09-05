@@ -63,6 +63,53 @@ def _element_from_name(name: str) -> str:
     return sym[0]
 
 
+# AutoDock (PDBQT) atom-type -> real chemical element.  PDBQT atom lines end
+# with an AutoDock *type* token (not necessarily an element symbol):
+#   C  -> carbon, A -> aromatic carbon, NA -> hydrogen-bond acceptor N,
+#   OA -> acceptor O, SA -> acceptor S, HD -> hydrogen-donor H, ...
+# Treating "A"/"NA"/"OA"/"SA"/"HD" as elements would silently corrupt
+# self-docking RMSD element-matching, so we map them to real elements.
+_AUTODOCK_TYPE_ELEMENT = {
+    "C": "C", "A": "C",
+    "N": "N", "NA": "N",
+    "O": "O", "OA": "O",
+    "S": "S", "SA": "S",
+    "H": "H", "HD": "H",
+    "P": "P", "F": "F", "CL": "Cl", "BR": "Br", "I": "I",
+    "B": "B", "SI": "Si", "SE": "Se", "MG": "Mg", "MN": "Mn",
+    "ZN": "Zn", "CA": "Ca", "FE": "Fe", "CO": "Co", "CU": "Cu",
+    "MO": "Mo", "CD": "Cd", "HG": "Hg", "NI": "Ni", "PT": "Pt",
+}
+
+
+def _element_of_pdbqt_atom(line: str, name: str) -> str:
+    """Robust element detection for a PDBQT ATOM/HETATM line.
+
+    Prefers a real element symbol if one is present, then the AutoDock type
+    mapping, then a name-based fallback.
+    """
+    toks = line.split()
+    if toks:
+        last = toks[-1]
+        # A valid element symbol at the end wins (Vina may write element here).
+        if re.fullmatch(r"(C|N|O|S|P|H|F|Cl|Br|I|B|Se|Si|Mg|Mn|Zn|Ca|Fe|Co|Cu|Mo)", last, re.I):
+            return last[:1].upper() + last[1:].lower()
+        mapped = _AUTODOCK_TYPE_ELEMENT.get(last.upper())
+        if mapped:
+            return mapped
+    # columns 77-79 (1-based 77) may hold an element or short type code
+    el = line[76:79].strip()
+    if len(el) > 1 and el[0] == " ":
+        el = el[1:]
+    if el and not el.isdigit():
+        mapped = _AUTODOCK_TYPE_ELEMENT.get(el.upper())
+        if mapped:
+            return mapped
+        if re.fullmatch(r"(C|N|O|S|P|H|F|Cl|Br|I|B|Se)", el, re.I):
+            return el[:1].upper() + el[1:].lower()
+    return _element_from_name(name)
+
+
 def parse_pdbqt_poses(path: str) -> List[DockedPose]:
     """Parse a multi-MODEL PDBQT file written by vina into DockedPose objects."""
     poses: List[DockedPose] = []
@@ -89,12 +136,8 @@ def parse_pdbqt_poses(path: str) -> List[DockedPose]:
                 x = float(line[30:38]); y = float(line[38:46]); z = float(line[46:54])
             except ValueError:
                 continue
-            # element: from PDBQT columns 77-79, else infer
-            el = line[76:79].strip()
-            if len(el) > 1 and el[0] == " ":
-                el = el[1:]
-            if not el or el.isdigit():
-                el = _element_from_name(name)
+            # element: real element / AutoDock type token / name-based fallback
+            el = _element_of_pdbqt_atom(line, name)
             cur.atoms.append(PoseAtom(name=name, element=el, x=x, y=y, z=z))
     return poses
 
@@ -292,7 +335,7 @@ def _dock_with_cli(vina_bin, receptor_pdbqt, ligand_pdbqt, pair_dir, pair, rec_n
         pass
     aff = [p.affinity for p in parse_pdbqt_poses(poses_pdbqt)]
     return _write_result_files(pair_dir, pair, rec_name, lig_name, stage, seed,
-                               exhaustiveness, n_poses, energy_range, center, size,
+                               exhaustiveness, n_poses, energy_range, center, sz,
                                poses_pdbqt, aff, backend="cli")
 
 

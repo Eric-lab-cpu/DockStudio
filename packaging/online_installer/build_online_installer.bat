@@ -3,7 +3,7 @@ REM ============================================================
 REM DockStudio (Eric Studio) - build Windows online installer
 REM Works on Windows where NSIS is installed (makensis on PATH).
 REM Usage: packaging\online_installer\build_online_installer.bat
-REM Output: dist\DockStudio_Setup_1.0.0.exe
+REM Output: dist\DockStudio_Setup_1.1.0.exe
 REM ============================================================
 setlocal
 cd /d "%~dp0..\.."
@@ -20,5 +20,5 @@ if errorlevel 1 (
 )
 makensis packaging\online_installer\DockStudio_online.nsi
 if errorlevel 1 exit /b 1
-echo DONE: dist\DockStudio_Setup_1.0.0.exe
+echo DONE: dist\DockStudio_Setup_1.1.0.exe
 endlocal

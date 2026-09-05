@@ -58,12 +58,15 @@ def write_final_topk(cfg: RunConfig, refine_results: List[dict],
                      ligands: List[str]) -> dict:
     """Derive final Top-K from refined (mode-1) energies.
 
-    Writes final_top5.csv and _final_top5.json; returns a container dict.
+    Writes ``final_top{K}.csv`` and ``_final_top{K}.json`` (K = cfg.top_k) and
+    returns a container dict.  The filename reflects the *actual* K so that a
+    non-default Top-K is never mislabelled as "top5".
     """
     best_refine: Dict[tuple, float] = {}
     for res in refine_results:
         best_refine[(res["receptor"], res["ligand"])] = res.get("affinity_best")
 
+    k = max(1, int(cfg.top_k))
     output_rows = []
     top_json = {}
     for rec in cfg.receptor_names:
@@ -78,7 +81,6 @@ def write_final_topk(cfg: RunConfig, refine_results: List[dict],
                 continue
             scored.append((lig, float(aff), source))
         scored.sort(key=lambda x: x[1])
-        k = cfg.top_k
         for lig, aff, source in scored[:k]:
             output_rows.append({"receptor": rec, "ligand": lig,
                                 "best_affinity_kcal_mol": round(aff, 2),
@@ -86,8 +88,8 @@ def write_final_topk(cfg: RunConfig, refine_results: List[dict],
         top_json[rec] = {"top": [{"ligand": lig, "affinity_kcal_mol": round(aff, 2)}
                                  for lig, aff, source in scored[:k]]}
 
-    csv_path = os.path.join(results_dir, "final_top5.csv")
-    utils.write_json(top_json, os.path.join(results_dir, "_final_top5.json"))
+    csv_path = os.path.join(results_dir, f"final_top{k}.csv")
+    utils.write_json(top_json, os.path.join(results_dir, f"_final_top{k}.json"))
     with open(csv_path, "w", newline="", encoding="utf-8-sig") as fh:
         cols = ["receptor", "ligand", "best_affinity_kcal_mol", "source"]
         w = csv.DictWriter(fh, fieldnames=cols)

@@ -6,7 +6,7 @@ REM Requirements on the BUILD machine:
 REM   1) Miniconda + env "dockstudio" (see packaging/environment.yml)
 REM   2) Inno Setup 6  https://jrsoftware.org/isinfo.php  (ISCC on PATH)
 REM
-REM Produces: dist\installer\DockStudio_Setup_1.0.0.exe
+REM Produces: dist\installer\DockStudio_Setup_1.1.0.exe
 REM ============================================================
 setlocal enabledelayedexpansion
 cd /d "%~dp0..\.."
@@ -31,7 +31,7 @@ if "%ISCC%"=="" (
 )
 
 echo [3/4] version...
-set VER=1.0.0
+set VER=1.1.0
 
 echo [4/4] compile installer...
 %ISCC% /DAPP_VERSION=%VER% /DPORT="dist\DockStudioPortable" packaging\installer\DockStudio_setup.iss

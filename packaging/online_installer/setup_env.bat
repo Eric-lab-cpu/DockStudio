@@ -105,7 +105,7 @@ echo [2/3] Installing scientific stack via pip (Windows wheels) ...
 rem NOTE: prody has no Windows pip wheel and is NOT required by the DockStudio
 rem engine - it is intentionally omitted here.
 "%ENV%\python.exe" -m pip install --no-input --disable-pip-version-check ^
-    numpy pandas scipy pillow rdkit gemmi meeko plip
+    numpy pandas scipy pillow rdkit gemmi meeko plip ttkbootstrap
 if errorlevel 1 goto :PIP_FAILED
 echo Scientific stack installed.
 echo.

@@ -19,6 +19,7 @@ from .._version import (
     DEFAULT_N_POSES,
     DEFAULT_PH,
     DEFAULT_REFINE_EXHAUSTIVENESS,
+    DEFAULT_RUN_ACCURACY_REPORT,
     DEFAULT_TOP_K,
     DEFAULT_TOP_REFINE,
 )
@@ -145,6 +146,7 @@ class RunConfig:
     run_visualization: bool = True
     run_refine: bool = True
     write_pse: bool = True
+    run_accuracy_report: bool = DEFAULT_RUN_ACCURACY_REPORT
     overwrite: bool = False
 
     # validation helpers

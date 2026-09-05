@@ -25,7 +25,7 @@ ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 RUNTIME = os.path.join(HERE, "runtime")
 DEFAULT_OUT = os.path.join(ROOT, "dist", "payload")
 
-COPY_APP_DIRS = ["dockstudio", "assets", "examples"]
+COPY_APP_DIRS = ["dockstudio", "assets", "examples", "docs"]
 COPY_APP_FILES = ["README.md", "用户手册.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "pyproject.toml"]
 
 

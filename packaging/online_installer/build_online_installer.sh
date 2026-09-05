@@ -3,7 +3,7 @@
 # DockStudio (Eric Studio) - build Windows online installer
 # Works on Linux/macOS/Windows with NSIS available.
 # Usage: bash packaging/online_installer/build_online_installer.sh
-# Output: dist/DockStudio_Setup_1.0.0.exe
+# Output: dist/DockStudio_Setup_1.1.0.exe
 # ============================================================
 set -e
 cd "$(dirname "$0")/../.."
@@ -24,4 +24,4 @@ fi
 
 # 3. compile
 "$MAKENSIS" packaging/online_installer/DockStudio_online.nsi
-echo "DONE: dist/DockStudio_Setup_1.0.0.exe"
+echo "DONE: dist/DockStudio_Setup_1.1.0.exe"

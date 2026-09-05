@@ -1,7 +1,7 @@
 ; ============================================================
 ; DockStudio (Eric Studio) - Online Installer
 ; Build: makensis DockStudio_online.nsi   (runs on Linux or Windows)
-; Output: <repo>/dist/DockStudio_Setup_1.0.0.exe
+; Output: <repo>/dist/DockStudio_Setup_1.1.0.exe
 ;
 ; The payload (dist/payload) is prepared by prepare_payload.py
 ; ============================================================
@@ -10,7 +10,7 @@
 !include "FileFunc.nsh"
 
 !define APP_NAME "DockStudio"
-!define APP_VERSION "1.0.0"
+!define APP_VERSION "1.1.0"
 !define APP_PUBLISHER "Eric Studio"
 !define APP_COPYRIGHT "Copyright (c) 2026 Eric Studio. All rights reserved."
 !define PORT "..\..\dist\payload"

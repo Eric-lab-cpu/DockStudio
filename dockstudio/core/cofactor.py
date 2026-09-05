@@ -195,20 +195,30 @@ def ccd_to_sdf_local_coords(
 
     Returns a stats dict (n_atoms, centroid checks, sanitize status).
     """
-    local = [r for r in st.parse_pdb(pdb_path)
+    local = [r for r in st.parse_structure(pdb_path)
              if r.record == "HETATM" and r.resname == resname
              and (not chain or r.chain == chain)
              and (resseq is None or r.resseq == resseq)]
     if not local:
         # fall back to any chain instance
-        local = [r for r in st.parse_pdb(pdb_path)
+        local = [r for r in st.parse_structure(pdb_path)
                  if r.record == "HETATM" and r.resname == resname]
     if not local:
         raise ValueError(f"residue {resname} not found in {pdb_path}")
     local_heavy = [r for r in local if r.element != "H"]
     local_centroid = st.heavy_centroid(local_heavy)
+    # NOTE: CCD *model* coordinates and the local PDB coordinates are in two
+    # unrelated frames, so a centroid offset is NOT a quality metric.  It is kept
+    # here only as an informational field.  The meaningful quality checks are the
+    # heavy-atom coverage of the CCD connectivity by the local PDB atoms and
+    # successful sanitisation of the assembled molecule.
     ccd_centroid = ccd.centroid_model()
     dev = utils.distance(local_centroid, ccd_centroid)
+    ccd_heavy_atoms = [a for a in ccd.atoms if a.element not in ("H", "D")]
+    local_heavy_names = {a.name for a in local_heavy}
+    ccd_heavy_names = {a.atom_id for a in ccd_heavy_atoms}
+    n_common = len(ccd_heavy_names & local_heavy_names)
+    coverage = n_common / max(len(ccd_heavy_names), 1)
 
     # map CCD atom_id -> local atom
     coord = {}
@@ -244,9 +254,11 @@ def ccd_to_sdf_local_coords(
     mol.AddConformer(conf)
 
     stats = {"n_atoms": mol.GetNumAtoms(), "n_heavy": mol.GetNumHeavyAtoms(),
-             "ccd_centroid_dev_A": round(dev, 3), "sanitized": False,
-             "ccd_centroid": [round(v, 3) for v in ccd_centroid],
-             "local_centroid": [round(v, 3) for v in local_centroid],
+             "n_ccd_heavy": len(ccd_heavy_atoms),
+             "n_local_heavy": len(local_heavy),
+             "heavy_coverage_local_vs_ccd": round(coverage, 3),
+             "ccd_model_centroid_offset_A": round(dev, 3),
+             "sanitized": False,
              "fallback": ""}
     try:
         Chem.SanitizeMol(mol)

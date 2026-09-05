@@ -11,6 +11,7 @@ import numpy as np
 from rdkit import Chem
 
 from . import docking, models, utils
+from .._version import SELFDOCK_PASS_RMSD
 from .models import project_subdirs
 
 
@@ -91,7 +92,7 @@ def evaluate_selfdock(
             out["min_rmsd_pose"] = p.index
             out["energy_min_rmsd"] = round(p.affinity, 2)
     if out["mode1_rmsd"] is not None:
-        out["pass"] = out["mode1_rmsd"] < 2.0
+        out["pass"] = out["mode1_rmsd"] <= SELFDOCK_PASS_RMSD
     if out["energy_min_rmsd"] is not None and out["mode1_rmsd"] is not None and len(poses) > 0:
         out["energy_delta_min_rmsd"] = round(out["energy_min_rmsd"] - poses[0].affinity, 2)
     out["poses"] = per_pose

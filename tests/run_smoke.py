@@ -50,6 +50,7 @@ def make_cfg(out_dir: str) -> models.RunConfig:
         run_visualization=True,
         run_refine=True,
         write_pse=False,
+        run_accuracy_report=True,
         ph=7.4,
         delete_bad_res=True,
     )

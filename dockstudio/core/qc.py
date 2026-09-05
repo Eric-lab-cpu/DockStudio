@@ -37,7 +37,7 @@ def check_matrix_vs_results(matrix: Dict[str, dict], results: List[dict], tol: f
 def check_csv_vs_json(csv_path: str, json_path: str) -> List[str]:
     issues = []
     if not (os.path.exists(csv_path) and os.path.exists(json_path)):
-        return ["missing final_top5.csv or _final_top5.json"]
+        return [f"missing {os.path.basename(csv_path)} or {os.path.basename(json_path)}"]
     with open(json_path, encoding="utf-8") as fh:
         j = json.load(fh)
     with open(csv_path, encoding="utf-8-sig", newline="") as fh:
@@ -46,10 +46,10 @@ def check_csv_vs_json(csv_path: str, json_path: str) -> List[str]:
         rec = row["receptor"]; lig = row["ligand"]
         top = j.get(rec, {}).get("top", [])
         if not any(t["ligand"] == lig for t in top):
-            issues.append(f"CSV row {rec}__{lig} missing from _final_top5.json")
+            issues.append(f"CSV row {rec}__{lig} missing from {os.path.basename(json_path)}")
     for rec, val in j.items():
         if len(val.get("top", [])) != sum(1 for r in rows if r["receptor"] == rec):
-            issues.append(f"_final_top5.json receptor {rec} count mismatch vs CSV")
+            issues.append(f"{os.path.basename(json_path)} receptor {rec} count mismatch vs CSV")
     return issues
 
 
@@ -83,10 +83,11 @@ def run_qc(cfg: models.RunConfig, out_dir: str) -> List[dict]:
         iss = check_matrix_vs_results(mat, results)
         checks.append({"check": "screening matrix vs result.json", "ok": not iss,
                        "detail": "; ".join(iss[:5]) or "consistent"})
-    csv_path = os.path.join(out_dir, "results", "final_top5.csv")
-    json_path = os.path.join(out_dir, "results", "_final_top5.json")
+    k = max(1, int(cfg.top_k))
+    csv_path = os.path.join(out_dir, "results", f"final_top{k}.csv")
+    json_path = os.path.join(out_dir, "results", f"_final_top{k}.json")
     iss2 = check_csv_vs_json(csv_path, json_path)
-    checks.append({"check": "final_top5.csv vs _final_top5.json", "ok": not iss2,
+    checks.append({"check": f"final_top{k}.csv vs _final_top{k}.json", "ok": not iss2,
                    "detail": "; ".join(iss2[:5]) or "consistent"})
     return checks
 

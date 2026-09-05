@@ -26,12 +26,20 @@ LIG_CHAIN = "Z"
 
 
 def _find_pymol():
+    """Return a command prefix (list[str]) that runs PyMOL, or None.
+
+    Search order: ``pymol`` executable on PATH; else a ``pymol`` module in the
+    current interpreter (run as ``python -m pymol``); else None.
+    """
+    import shutil
     exe = which("pymol")
     if exe:
-        return exe
-    # pymol-open-source module fallback: run with python -m pymol
-    import shutil
-    return shutil.which("python") or "python"
+        return [exe]
+    try:
+        import pymol  # noqa: F401
+        return [shutil.which("python") or "python", "-m", "pymol"]
+    except Exception:
+        return None
 
 
 def write_complex_pml(workdir: str, name: str, ligand_chain: str = LIG_CHAIN,
@@ -80,10 +88,14 @@ def render_complex(workdir: str, name: str, out_png: str, include_pse: bool = Tr
     os.makedirs(os.path.dirname(out_png) or ".", exist_ok=True)
     pml_path = write_complex_pml(workdir, name, include_pse=include_pse)
     pymol = _find_pymol()
+    stats = {"pml": pml_path, "rc": None, "log_tail": "", "png": out_png, "ok": False}
+    if not pymol:
+        stats["log_tail"] = "PyMOL executable/module not found; 3D ray render skipped."
+        return stats
     from . import utils
-    rc, out, err = utils.run_cmd([pymol, "-cq", pml_path], timeout_s=900, cwd=workdir)
-    stats = {"pml": pml_path, "rc": rc, "log_tail": (out + err)[-1500:],
-             "png": out_png, "ok": False}
+    rc, out, err = utils.run_cmd(pymol + ["-cq", pml_path], timeout_s=900, cwd=workdir)
+    stats["rc"] = rc
+    stats["log_tail"] = (out + err)[-1500:]
     src = os.path.join(workdir, "scene_3d.png")
     if os.path.exists(src):
         os.replace(src, out_png)

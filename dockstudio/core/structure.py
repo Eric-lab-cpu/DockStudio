@@ -84,6 +84,87 @@ def parse_pdb(path: str, keep_chains: Optional[List[str]] = None) -> List[AtomRe
     return recs
 
 
+# ---------------------------------------------------------------------------
+# Multi-format structure reading (PDB and mmCIF)
+# ---------------------------------------------------------------------------
+# Receptor input formats supported in v1.1: PDB(.pdb/.ent) and mmCIF(.cif/.mmcif).
+# mmCIF is converted on read into the same AtomRec list used by the PDB path, so
+# every downstream step (inventory, cleaning, boxes, cofactor coordinates, ...)
+# is format-agnostic and the *scientific* semantics stay identical.
+_PDB_EXTS = (".pdb", ".ent")
+_CIF_EXTS = (".cif", ".mmcif")
+
+
+def guess_structure_format(path: str) -> str:
+    """Return 'cif' for mmCIF inputs, 'pdb' otherwise."""
+    ext = os.path.splitext(str(path))[1].lower()
+    return "cif" if ext in _CIF_EXTS else "pdb"
+
+
+def parse_structure(path: str, keep_chains: Optional[List[str]] = None) -> List[AtomRec]:
+    """Read a macromolecular structure file (PDB or mmCIF) into AtomRec list.
+
+    Coordinates are read as-is (same Cartesian frame for both formats), which is
+    essential for crystal-coordinate based RMSD evaluation.
+    """
+    if guess_structure_format(path) == "cif":
+        return _parse_cif_atoms(path, keep_chains=keep_chains)
+    return parse_pdb(path, keep_chains=keep_chains)
+
+
+def _parse_cif_atoms(path: str, keep_chains: Optional[List[str]] = None) -> List[AtomRec]:
+    """Read atom records of an mmCIF (PDBx) file via gemmi.
+
+    Record type (ATOM vs HETATM) is derived from the residue name using the
+    same dictionaries as the PDB path (standard amino acids / nucleic acids ->
+    ATOM; everything else, incl. waters, ions, ligands and modified residues,
+    -> HETATM).  This keeps downstream cleaning semantics identical to PDB input
+    and is robust to mmCIF files whose ``entity_poly`` metadata is incomplete.
+    """
+    try:
+        import gemmi
+    except Exception as e:  # pragma: no cover - dependency guard
+        raise RuntimeError(f"mmCIF input requires the 'gemmi' package ({e})") from e
+    doc = gemmi.read_structure(str(path))
+    if not doc:
+        return []
+    model = doc[0]  # first model only (PDB-compatible behaviour)
+    recs: List[AtomRec] = []
+    for chain in model:
+        cid = chain.name if chain.name else " "
+        if keep_chains and cid not in keep_chains:
+            continue
+        for res in chain:
+            resn = (res.name or "UNK").strip() or "UNK"
+            seq = res.seqid.num if res.seqid else 0
+            icode = (res.seqid.icode if res.seqid else "") or " "
+            # Name-based ATOM/HETATM decision (PDB-compatible).
+            is_polymer = (resn in models.STANDARD_AAS) or (resn in models.NUCLEIC_RES)
+            record = "ATOM" if is_polymer else "HETATM"
+            for atom in res:
+                alt = atom.altloc or " "
+                if alt in ("", "\x00", ".", "?"):
+                    alt = " "
+                el = atom.element.name if atom.element else ""
+                if not el or el in ("?", "*"):
+                    # infer from PDB atom name (element usually first alpha chars)
+                    nm = (atom.name or "").strip()
+                    el = nm[0] if nm else "C"
+                try:
+                    occ = float(atom.occ)
+                except Exception:
+                    occ = 1.0
+                try:
+                    b = float(atom.b_iso)
+                except Exception:
+                    b = 0.0
+                p = atom.pos
+                recs.append(AtomRec(record, len(recs) + 1, (atom.name or "").strip(),
+                                    alt, resn, cid, seq, icode,
+                                    float(p.x), float(p.y), float(p.z), occ, b, el))
+    return recs
+
+
 def _name_field(name: str) -> str:
     return (" " + name.ljust(3))[:4]
 
@@ -183,8 +264,8 @@ class StructureInventory:
 
 
 def inventory_pdb(path: str, name: str = "", fetch_online_md5: Optional[str] = None) -> StructureInventory:
-    """Line-based inventory of a PDB file (section 4.1)."""
-    recs = parse_pdb(path)
+    """Inventory of a PDB or mmCIF structure file (section 4.1)."""
+    recs = parse_structure(path)
     inv = StructureInventory(path=path, name=name or os.path.splitext(os.path.basename(path))[0])
     if os.path.exists(path):
         try:
@@ -286,21 +367,39 @@ def clean_receptor(
     silently removed; they are returned in ``action.warnings`` for the
     caller to decide.
     """
-    recs = parse_pdb(pdb_path, keep_chains=keep_chains)
+    recs = parse_structure(pdb_path, keep_chains=keep_chains)
     crystal = first_crystal_line(pdb_path)
     action = CleanAction()
 
     # decide which residues to keep
     groups = group_residues(recs)
     kept: List[AtomRec] = []
+    box_margin = 4.0
+
+    def _inside_or_near_box(center_xyz: List[float]) -> bool:
+        if box_center is None or box_size is None:
+            return False
+        # 0 => inside the search box; <= margin => within a shell around it
+        return dist_to_box(center_xyz, box_center, box_size) <= box_margin
+
     for key, rr in groups.items():
         chain, resn, seq, icode = key
         record = rr[0].record
         heavy = [a for a in rr if a.element != "H"]
         center = heavy_centroid(rr)
 
-        if resn in ("HOH", "WAT") or (drop_ions_solvents and resn in models.IONS_SOLVENTS):
+        if resn in ("HOH", "WAT"):
             action.dropped[resn] = action.dropped.get(resn, 0) + 1
+            continue
+
+        if drop_ions_solvents and resn in models.IONS_SOLVENTS:
+            action.dropped[resn] = action.dropped.get(resn, 0) + 1
+            if _inside_or_near_box(center):
+                action.warnings.append(
+                    f"ion/solvent {resn} {chain}:{resn}{seq} removed but lies inside/near "
+                    f"the search box (distance-to-box "
+                    f"{dist_to_box(center, box_center, box_size):.1f} A) - check whether it "
+                    f"is a functional metal/cofactor.")
             continue
 
         if record == "HETATM":
@@ -333,6 +432,12 @@ def clean_receptor(
             # true HET ligand / cofactor
             if drop_hetligands:
                 action.dropped[resn] = action.dropped.get(resn, 0) + 1
+                if len(heavy) >= 4 and _inside_or_near_box(center):
+                    action.warnings.append(
+                        f"HET/cofactor {resn} {chain}:{resn}{seq} removed but lies inside/near "
+                        f"the search box. If this is the native docking ligand the removal is "
+                        f"expected; if it is a functional cofactor (e.g. heme, FAD, metal) "
+                        f"review whether it should be retained.")
                 continue
             kept.extend(rr)
             continue
@@ -359,9 +464,12 @@ def clean_receptor(
 
 
 def coords_of_ligand(pdb_path: str, resname: str, chain: str = "", resseq: Optional[int] = None) -> List[AtomRec]:
-    """Return atom records of a specific HETATM residue (e.g. co-crystal ligand)."""
+    """Return atom records of a specific HETATM residue (e.g. co-crystal ligand).
+
+    Accepts PDB or mmCIF receptor files.
+    """
     out = []
-    for r in parse_pdb(pdb_path):
+    for r in parse_structure(pdb_path):
         if r.record == "HETATM" and r.resname == resname:
             if chain and r.chain != chain:
                 continue
