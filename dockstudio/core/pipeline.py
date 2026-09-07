@@ -6,14 +6,17 @@ import os
 from typing import Callable, Dict, List, Optional
 
 from . import (accuracy, batch, box as boxmod, cofactor, docking, envinfo,
-               interactions, inventory, ligand, models, qc, ranking, receptor,
-               reports, selfdock, structure as st, utils, visualize)
+               enrich, interactions, inventory, ligand, models, qc, ranking,
+               receptor, reports, selfdock, structure as st, utils, visualize,
+               vizhtml)
 from .models import BoxDef, RunConfig, project_subdirs
+from .._version import __version__ as VERSION
 
 LogCb = Optional[Callable[[str], None]]
 ProgCb = Optional[Callable[[dict], None]]
 
-PHASES = ["prepare", "screen", "refine", "selfdock", "analyze", "visualize", "report"]
+PHASES = ["prepare", "screen", "refine", "selfdock", "analyze", "enrich",
+          "visualize", "report", "html"]
 
 
 class Pipeline:
@@ -120,12 +123,16 @@ class Pipeline:
             lib_dir = os.path.join(self.sub["prepared_ligands"], utils.safe_name(base))
             os.makedirs(lib_dir, exist_ok=True)
             self._log(f"[prepare] ligand library {lig['path']}")
-            entries = ligand.prepare_ligand_library(lig["path"], lib_dir, ph=self.cfg.ph,
-                                                    library_name=base)
+            entries = ligand.prepare_ligand_file(lig["path"], lib_dir, ph=self.cfg.ph,
+                                                 library_name=base)
             for e in entries:
                 if e.pdbqt_ok:
                     self.ligands[e.name] = {"pdbqt": e.pdbqt, "prep_sdf": e.prep_sdf,
                                             "source": lig["path"]}
+                    if e.smiles:
+                        self.ligands[e.name]["smiles"] = e.smiles
+                    if e.mol_source == "smiles":
+                        self.ligands[e.name]["mol_source"] = "smiles"
             # ligand_list rows already written by inventory; update pdbqt status
         # 6. cocrystal references (selfdock) and ligand pdbqt for native ligand
         self._prepare_cocrystal()
@@ -268,7 +275,8 @@ class Pipeline:
             self.cfg, "screening", self.receptors,
             {k: v["pdbqt"] for k, v in self.ligands.items()},
             pairs=pairs, time_slice_s=time_slice_s,
-            progress=self._prog, log=self._log, stage_subdir=self.sub["screening"])
+            progress=self._prog, log=self._log, stage_subdir=self.sub["screening"],
+            workers=self.cfg.n_workers)
 
     # ------------------------------------------------------------------ #
     # PHASE: refine
@@ -290,7 +298,8 @@ class Pipeline:
             self.cfg, "refine", self.receptors,
             {k: v["pdbqt"] for k, v in self.ligands.items()},
             pairs=pairs, time_slice_s=time_slice_s,
-            progress=self._prog, log=self._log, stage_subdir=self.sub["refine"])
+            progress=self._prog, log=self._log, stage_subdir=self.sub["refine"],
+            workers=self.cfg.n_workers)
 
     # ------------------------------------------------------------------ #
     # PHASE: selfdock
@@ -308,7 +317,8 @@ class Pipeline:
             cocrystal_pdbqt_map={r: {"pdbqt": m["pdbqt"], "lig_id": m["lig_id"]}
                                  for r, m in usable.items()},
             time_slice_s=time_slice_s, progress=self._prog, log=self._log,
-            stage_subdir=os.path.join(self.out, "selfdock"))
+            stage_subdir=os.path.join(self.out, "selfdock"),
+            workers=self.cfg.n_workers)
 
     # ------------------------------------------------------------------ #
     # PHASE: analyze (top-K, selfdock eval, PLIP)
@@ -420,6 +430,36 @@ class Pipeline:
         return {"rendered": len(rendered)}
 
     # ------------------------------------------------------------------ #
+    # PHASE: enrich (ROC/AUC validation, v2.0, optional)
+    # ------------------------------------------------------------------ #
+    def phase_enrich(self) -> dict:
+        if not self.cfg.run_enrichment:
+            return {"enabled": False, "note": "run_enrichment off"}
+        self._log("== [enrich] ROC/AUC enrichment validation ==")
+        try:
+            res = enrich.build_enrichment_report(self.cfg, self.out,
+                                                 self.ligands, log=self._log)
+            auc = (res or {}).get("auc")
+            self._log(f"[enrich] done (AUC={auc if auc is not None else 'n/a'})")
+            return res
+        except Exception as e:
+            self._log(f"[enrich] FAILED: {e}")
+            return {"enabled": True, "error": str(e)}
+
+    # ------------------------------------------------------------------ #
+    # PHASE: html (interactive report + 3D viewers, v2.0)
+    # ------------------------------------------------------------------ #
+    def phase_html(self) -> dict:
+        if not getattr(self.cfg, "run_html_report", True):
+            return {"enabled": False, "note": "run_html_report off"}
+        self._log("== [html] interactive HTML report + 3D viewers ==")
+        try:
+            return vizhtml.build_html_report(self.cfg, self.out, log=self._log)
+        except Exception as e:
+            self._log(f"[html] FAILED: {e}")
+            return {"error": str(e)}
+
+    # ------------------------------------------------------------------ #
     # PHASE: report
     # ------------------------------------------------------------------ #
     def phase_report(self) -> dict:
@@ -515,10 +555,52 @@ def run_project(cfg: RunConfig, on_log: LogCb = None, on_progress: ProgCb = None
                 break
         elif ph == "analyze":
             pipe.phase_analyze()
+        elif ph == "enrich":
+            summary["enrich"] = pipe.phase_enrich()
         elif ph == "visualize":
             pipe.phase_visualize()
         elif ph == "report":
             pipe.phase_report()
+        elif ph == "html":
+            summary["html"] = pipe.phase_html()
         summary["phases"].append(ph)
     pipe._save_state()
+    # v2.0: persist a run summary with real stage statistics (counts/timing)
+    _write_run_summary(cfg, summary)
     return summary
+
+
+def _write_run_summary(cfg: RunConfig, summary: dict) -> None:
+    """Persist ``run_summary.json`` with honest, real stage statistics."""
+    if not cfg.out_dir:
+        return
+    try:
+        total = done = skipped = errors = 0
+        elapsed = 0.0
+        for key in ("screen", "refine", "selfdock"):
+            s = summary.get(key) or {}
+            total += int(s.get("total", 0) or 0)
+            done += int(s.get("done", 0) or 0)
+            skipped += int(s.get("skipped", 0) or 0)
+            errors += int(s.get("errors", 0) or 0)
+            elapsed += float(s.get("elapsed_s", 0.0) or 0.0)
+        record = {
+            "dockstudio_version": VERSION,
+            "generated_at": utils.now_str(),
+            "title": cfg.title or "",
+            "interrupted": bool(summary.get("interrupted", False)),
+            "n_receptors": len(cfg.receptors),
+            "n_ligand_sources": len(cfg.ligands),
+            "docking_total": total,
+            "docking_done": done,
+            "docking_skipped": skipped,
+            "docking_errors": errors,
+            "docking_elapsed_s": round(elapsed, 2),
+            "workers": int(cfg.n_workers or 1),
+            "enrichment": (summary.get("enrich") or {}).get("enabled", False),
+            "html_report": (summary.get("html") or {}).get("report_path", ""),
+            "phases_run": summary.get("phases", []),
+        }
+        utils.write_json(record, os.path.join(cfg.out_dir, "run_summary.json"))
+    except Exception:
+        pass

@@ -6,9 +6,17 @@ import csv
 import os
 from typing import Dict, List
 
+from rdkit import Chem
+
 from . import structure as st
 from .models import RunConfig
-from .ligand import LigandEntry, iter_molecules, analyze_molecule
+from .ligand import (
+    LigandEntry,
+    analyze_molecule,
+    is_smiles_source,
+    iter_molecules,
+    read_smiles_records,
+)
 from .utils import md5_file
 
 
@@ -68,6 +76,40 @@ def inventory_ligand_sdf(sdf_path: str, name: str) -> List[dict]:
     return out
 
 
+def inventory_ligand_smiles(path: str, name: str) -> List[dict]:
+    """Inventory rows for a SMILES/CSV ligand source (v2.0)."""
+    base = name or os.path.splitext(os.path.basename(path))[0]
+    out = []
+    for rec in read_smiles_records(path):
+        smi = rec["smiles"]
+        lig_id = f"{base}_{rec['index']}"
+        try:
+            mol = Chem.MolFromSmiles(smi)
+        except Exception:
+            mol = None
+        if mol is None:
+            out.append({"ligand_id": lig_id, "source_file": os.path.basename(path),
+                        "index_in_sdf": rec["index"], "formula": "", "MW": "",
+                        "formal_charge": "", "rotatable_bonds": "", "heavy_atoms": "",
+                        "fragments": "", "has_3D": "", "sanitized": "no",
+                        "warnings": "unparseable SMILES", "smiles": smi})
+            continue
+        entry = analyze_molecule(mol, lig_id, path, rec["index"])
+        entry.mol_source = "smiles"
+        entry.smiles = smi
+        d = entry.to_row()
+        d["warnings"] = "; ".join(entry.warnings)
+        out.append(d)
+    return out
+
+
+def inventory_ligand_file(path: str, name: str) -> List[dict]:
+    """Inventory any supported ligand source (SDF/MOL/SMILES/CSV)."""
+    if is_smiles_source(path):
+        return inventory_ligand_smiles(path, name or None)
+    return inventory_ligand_sdf(path, name or None)
+
+
 def write_csv(rows: List[dict], path: str) -> None:
     if not rows:
         rows = [{"note": "no data"}]
@@ -88,7 +130,7 @@ def run_inventory(cfg: RunConfig, out_dir: str) -> dict:
         r = rec
         rec_rows += inventory_receptor(r["path"], r["name"], r.get("chains", []))
     for lig in cfg.ligands:
-        lig_rows += inventory_ligand_sdf(lig["path"], lig["name"] or None)
+        lig_rows += inventory_ligand_file(lig["path"], lig["name"] or None)
     write_csv(rec_rows, os.path.join(out_dir, "receptor_inventory.csv"))
     write_csv(lig_rows, os.path.join(out_dir, "ligand_list.csv"))
     return {"receptor_rows": rec_rows, "ligand_rows": lig_rows}

@@ -114,6 +114,10 @@ def build_accuracy_report(cfg: RunConfig, out_dir: str, log=None) -> dict:
         sd = selfdock_rows.get(name, {})
         mode1 = _rmsd_of(sd, "mode1_rmsd")
         min_rmsd = _rmsd_of(sd, "min_rmsd")
+        greedy = _rmsd_of(sd, "mode1_rmsd_greedy")     # comparison column (v2.0)
+        min_greedy = _rmsd_of(sd, "min_rmsd_greedy")
+        rmsd_method = sd.get("rmsd_method", "")
+        symmetry_used = sd.get("symmetry_used", False)
         # energy bookkeeping from selfdock evaluation (stored in selfdock_summary):
         energy_gap = _rmsd_of(sd, "energy_delta_min_rmsd")
         for p in sd.get("poses", []) or []:
@@ -122,6 +126,7 @@ def build_accuracy_report(cfg: RunConfig, out_dir: str, log=None) -> dict:
                 "pose": p.get("pose", ""),
                 "affinity_kcal_mol": p.get("affinity", ""),
                 "rmsd_A": p.get("rmsd", ""),
+                "rmsd_greedy_A": p.get("rmsd_greedy", ""),
             })
 
         if mode1 is None:
@@ -137,11 +142,15 @@ def build_accuracy_report(cfg: RunConfig, out_dir: str, log=None) -> dict:
                 "box_method": box.get("method", ""),
                 "exhaustiveness": cfg.refine_exhaustiveness if cfg.run_refine else cfg.exhaustiveness,
                 "mode1_rmsd_A": "",
+                "mode1_rmsd_greedy_A": "",
                 "min_rmsd_A": "",
+                "min_rmsd_greedy_A": "",
                 "min_rmsd_pose": "",
                 "energy_delta_mode1_min_A": "",
                 "pass_2A": "",
                 "verdict": "not_assessable",
+                "rmsd_method": "",
+                "symmetry_used": "",
                 "note": reason,
             })
             continue
@@ -164,11 +173,15 @@ def build_accuracy_report(cfg: RunConfig, out_dir: str, log=None) -> dict:
             "box_method": box.get("method", ""),
             "exhaustiveness": cfg.refine_exhaustiveness if cfg.run_refine else cfg.exhaustiveness,
             "mode1_rmsd_A": round(mode1, 3),
+            "mode1_rmsd_greedy_A": round(greedy, 3) if greedy is not None else "",
             "min_rmsd_A": round(min_rmsd, 3) if min_rmsd is not None else "",
+            "min_rmsd_greedy_A": round(min_greedy, 3) if min_greedy is not None else "",
             "min_rmsd_pose": min_pose if min_pose is not None else "",
             "energy_delta_mode1_min_A": round(gap, 2) if gap is not None else "",
             "pass_2A": "yes" if pass_2a else "no",
             "verdict": _verdict(mode1),
+            "rmsd_method": rmsd_method,
+            "symmetry_used": "yes" if symmetry_used else "no",
             "note": (
                 f"lowest-energy pose (mode 1) RMSD = {mode1:.2f} A; "
                 f"best-RMSD pose #{min_pose} = "
@@ -179,8 +192,10 @@ def build_accuracy_report(cfg: RunConfig, out_dir: str, log=None) -> dict:
 
     # ---- write per-receptor CSV -------------------------------------------------
     rec_cols = ["receptor", "cocrystal_ligand", "box_method", "exhaustiveness",
-                "mode1_rmsd_A", "min_rmsd_A", "min_rmsd_pose",
-                "energy_delta_mode1_min_A", "pass_2A", "verdict", "note"]
+                "mode1_rmsd_A", "mode1_rmsd_greedy_A", "min_rmsd_A",
+                "min_rmsd_greedy_A", "min_rmsd_pose",
+                "energy_delta_mode1_min_A", "pass_2A", "verdict",
+                "rmsd_method", "symmetry_used", "note"]
     csv_path = os.path.join(reports_dir, "accuracy_assessment.csv")
     with open(csv_path, "w", newline="", encoding="utf-8-sig") as fh:
         w = csv.DictWriter(fh, fieldnames=rec_cols, extrasaction="ignore")
@@ -190,7 +205,8 @@ def build_accuracy_report(cfg: RunConfig, out_dir: str, log=None) -> dict:
     pose_path = os.path.join(reports_dir, "accuracy_poses.csv")
     if pose_rows:
         with open(pose_path, "w", newline="", encoding="utf-8-sig") as fh:
-            w = csv.DictWriter(fh, fieldnames=["receptor", "pose", "affinity_kcal_mol", "rmsd_A"])
+            w = csv.DictWriter(fh, fieldnames=["receptor", "pose", "affinity_kcal_mol",
+                                               "rmsd_A", "rmsd_greedy_A"])
             w.writeheader()
             w.writerows(pose_rows)
 
@@ -202,6 +218,12 @@ def build_accuracy_report(cfg: RunConfig, out_dir: str, log=None) -> dict:
     L.append(f"- 项目标题:{cfg.title or '(未命名)'}")
     L.append(f"- 评估方式:**共晶配体回贴(self-docking redocking)**,同一笛卡尔坐标系下"
              f"对接姿态 vs 晶体姿态的重原子 RMSD(无重新叠加)。")
+    L.append(f"- RMSD 主口径(v2.0):**对称性感知 RMSD**——参考分子对称等价类由图的"
+             f" **Weisfeiler-Lehman 颜色细化**自动感知(忽略键级/电荷,故羧酸/磷酸等"
+             f" 共振等价原子视作一类),等价类内的原子互换不计误差,消除对称配体的误报 "
+             f"FAIL;历史同元素贪心最近邻 RMSD 保留为对比列(`*_greedy`)。"
+             f" 若对称性感知不可用(分子过大等),主口径如实退化为贪心值,并在结果中标注"
+             f" `symmetry_used=no`。")
     L.append(f"- 判定阈值:<={ACCURACY_REPORT_BASELINE_STRICT:.1f} A = 高精度;"
              f"<= {ACCURACY_REPORT_BASELINE_MEDIUM:.1f} A = 可接受;"
              f"> {SELFDOCK_PASS_RMSD:.1f} A = FAIL / 姿态未重现。")
@@ -257,11 +279,12 @@ def build_accuracy_report(cfg: RunConfig, out_dir: str, log=None) -> dict:
     L.append("")
     L.append("## 4. 局限与诚实声明")
     L.append("")
-    L.append("- 本报告**只反映自对接回贴精度**,不评估:(i) 无共晶配体靶点的对接"
+    L.append("- 本报告只反映自对接回贴精度,不评估:(i) 无共晶配体靶点的对接"
              "(探索性,不可验证);(ii) 打分/富集精度(需要活性/非活性实验数据);"
              "(iii) 蛋白柔性/诱导契合。")
-    L.append("- RMSD 使用同元素原子贪心最近邻匹配,未做对称性修正;对称配体(如苯环"
-             "翻转、甲基旋转)的 RMSD 可能被高估。")
+    L.append("- 主口径 RMSD 为对称性感知值;每列同元素贪心最近邻值(对比列)见 "
+             "`accuracy_assessment.csv` 与 `accuracy_poses.csv` 中的 `*_greedy*` 字段。"
+             "对称等价类(颜色细化)的具体方法与退化条件在报告头部说明。")
     L.append(f"- 质子化采用文档化简单规则(目标 pH {cfg.ph};羧酸 pH≥5 去质子化、"
              f"碱性胺 pH≤8.5 质子化),未使用 pKa 预测;手性/互变异构需人工复核后再下结论。")
     L.append(f"- 运行环境与完整参数见 `01_methods_report.md`;自动一致性检查见 "

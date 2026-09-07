@@ -428,7 +428,7 @@ class DockStudioApp:
         self._btn(bf, "链 / 共晶…", self._edit_receptor).pack(side="left", padx=4)
 
         # --- ligand card ---------------------------------------------------
-        right = self._card(mid, "配体库(SDF / MOL)— 可添加多个文件")
+        right = self._card(mid, "配体库(SDF / MOL / SMILES / CSV)— 可添加多个文件")
         right.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
         right.columnconfigure(0, weight=1)
         right.rowconfigure(1, weight=1)
@@ -440,7 +440,7 @@ class DockStudioApp:
         self.lig_list.grid(row=1, column=0, sticky="nsew", padx=2, pady=4)
         lf = ttk.Frame(right)
         lf.grid(row=2, column=0, sticky="w")
-        self._btn(lf, "添加 SDF/MOL…", self._add_ligand, bootstyle="primary").pack(side="left")
+        self._btn(lf, "添加 SDF/SMILES…", self._add_ligand, bootstyle="primary").pack(side="left")
         self._btn(lf, "删除选中", self._del_ligand).pack(side="left", padx=4)
 
     def _add_receptor(self):
@@ -513,7 +513,9 @@ class DockStudioApp:
     def _add_ligand(self):
         paths = filedialog.askopenfilenames(
             parent=self.root, title="选择配体库",
-            filetypes=[("SDF/MOL", "*.sdf *.mol *.sd"),
+            filetypes=[("配体文件", "*.sdf *.mol *.sd *.smi *.smiles *.csv *.txt"),
+                       ("SDF/MOL", "*.sdf *.mol *.sd"),
+                       ("SMILES/CSV", "*.smi *.smiles *.csv *.txt"),
                        ("所有文件", "*.*")])
         for p in paths:
             if any(l["path"] == p for l in self.ligands):
@@ -526,6 +528,20 @@ class DockStudioApp:
         if sel:
             self.ligands.pop(int(sel[0]))
             self._refresh_lig_list()
+
+    def _pick_enrich_file(self, kind: str):
+        p = filedialog.askopenfilename(
+            parent=self.root, title=("选择已知活性文件" if kind == "actives" else "选择诱饵文件"),
+            filetypes=[("配体文件", "*.sdf *.mol *.sd *.smi *.smiles *.csv *.txt"),
+                       ("SDF/MOL", "*.sdf *.mol *.sd"),
+                       ("SMILES/CSV", "*.smi *.smiles *.csv *.txt"),
+                       ("所有文件", "*.*")])
+        if p:
+            if kind == "actives":
+                self.act_var.set(p)
+            else:
+                self.dec_var.set(p)
+            self._q.put(("log", f"富集度 {kind} 文件: {p}"))
 
     def _choose_out(self):
         p = filedialog.askdirectory(parent=self.root, title="选择输出目录")
@@ -811,6 +827,36 @@ class DockStudioApp:
                          (self.chk_pse, "输出 .pse 会话")]:
             ttk.Checkbutton(row2, text=txt, variable=var).pack(side="left", padx=8)
 
+        # --- v2.0: throughput / enrichment validation card ------------------
+        v2 = self._card(f, "v2.0: 高通量并行 + 富集度验证")
+        v2.pack(fill="x", pady=8)
+        row0 = ttk.Frame(v2)
+        row0.pack(fill="x", padx=6, pady=3)
+        self.workers = tk.IntVar(value=1)
+        ttk.Label(row0, text="并行任务数(进程池; >1 时每个 dock 用“并行 CPU”线程):").pack(side="left")
+        ttk.Entry(row0, textvariable=self.workers, width=8).pack(side="left", padx=4)
+        self.chk_enrich = tk.BooleanVar(value=False)
+        ttk.Checkbutton(v2, text="启用“富集度验证模式”(ROC/AUC/EF;需提供已知活性 + 诱饵数据)",
+                        variable=self.chk_enrich).pack(anchor="w", padx=6, pady=2)
+        self.act_var = tk.StringVar(value="")
+        self.dec_var = tk.StringVar(value="")
+        actrow = ttk.Frame(v2)
+        actrow.pack(fill="x", padx=6, pady=1)
+        ttk.Label(actrow, text="已知活性文件(SDF/SMILES/CSV):").pack(side="left")
+        ttk.Entry(actrow, textvariable=self.act_var, width=30).pack(side="left", padx=4)
+        self._btn(actrow, "浏览…", lambda: self._pick_enrich_file("actives"),
+                  bootstyle="secondary").pack(side="left")
+        decrow = ttk.Frame(v2)
+        decrow.pack(fill="x", padx=6, pady=1)
+        ttk.Label(decrow, text="诱饵文件(SDF/SMILES/CSV):").pack(side="left")
+        ttk.Entry(decrow, textvariable=self.dec_var, width=30).pack(side="left", padx=4)
+        self._btn(decrow, "浏览…", lambda: self._pick_enrich_file("decoys"),
+                  bootstyle="secondary").pack(side="left")
+        ttk.Label(v2, justify="left", wraplength=940, foreground="#666",
+                  text="说明:富集度模式要求 active/decoy 分子也包含在你的配体库中并成功对接;"
+                       "引擎按规范 SMILES 匹配打分并计算 AUC/EF1%/5%,绝不自动生成活性数据。"
+                       "未提供完整数据时本模式不产出 ROC 结果。").pack(anchor="w", padx=6, pady=(2, 2))
+
         note = self._card(f, "说明(科学严谨性)")
         note.pack(fill="x", pady=(0, 4))
         ttk.Label(note, justify="left", wraplength=940, foreground="#555",
@@ -844,6 +890,12 @@ class DockStudioApp:
             run_refine=self.chk_refine.get(),
             write_pse=self.chk_pse.get(),
             run_accuracy_report=self.chk_acc.get(),
+            n_workers=_safe_int(self.workers, 1) if hasattr(self, "workers") else 1,
+            run_enrichment=self.chk_enrich.get() if hasattr(self, "chk_enrich") else False,
+            actives_path=self.act_var.get().strip() if hasattr(self, "act_var") else "",
+            decoys_path=self.dec_var.get().strip() if hasattr(self, "dec_var") else "",
+            run_html_report=True,
+            use_symmetry_rmsd=True,
             delete_bad_res=True,
             overwrite=False)
 
@@ -916,6 +968,15 @@ class DockStudioApp:
                 "准确性评估",
                 "已勾选“导出对接准确性评估报告”但未勾选“回贴验证”。准确性评估依赖自对接结果;"
                 "若继续,报告将如实标注“不可评估”。", parent=self.root)
+        if cfg.run_enrichment:
+            bad = [k for k, v in (("actives", cfg.actives_path), ("decoys", cfg.decoys_path))
+                   if not v or not os.path.isfile(v)]
+            if bad:
+                messagebox.showwarning(
+                    "富集度验证",
+                    "已启用富集度验证但缺少文件: " + ", ".join(bad) +
+                    "\n本次将如实跳过 ROC/AUC(不会生成伪造结果)。可返回 ③参数 补齐后重跑。",
+                    parent=self.root)
         self._stop_event.clear()
         phases = pipeline.PHASES if cfg.run_refine else \
             [p for p in pipeline.PHASES if p != "refine"]
@@ -1003,6 +1064,12 @@ class DockStudioApp:
         self._btn(top, "打开图件目录", lambda: self._open_subdir("results")).pack(side="left", padx=6)
         self._btn(top, "打开准确性评估报告", self._open_accuracy_report,
                   bootstyle="primary").pack(side="left", padx=6)
+        self._btn(top, "HTML 总报告", self._open_html_report,
+                  bootstyle="success").pack(side="left", padx=6)
+        self._btn(top, "3D 查看器目录", lambda: self._open_subdir("html_viewers"),
+                  bootstyle="secondary-outline").pack(side="left", padx=6)
+        self._btn(top, "打包导出 .zip", self._export_zip,
+                  bootstyle="info").pack(side="left", padx=6)
 
         self.res_tree = ttk.Treeview(f, columns=("receptor", "aff", "src"),
                                      show="headings", height=11)
@@ -1039,6 +1106,36 @@ class DockStudioApp:
                 return
         messagebox.showinfo("提示", "尚无准确性评估报告。\n请先在 ③参数 勾选“导出对接准确性评估报告”"
                                    "并运行流水线(需自对接启用)。", parent=self.root)
+
+    def _open_html_report(self):
+        base = self.out_var.get()
+        if base and base != OUT_FOLDER_MARKER:
+            p = os.path.join(base, "reports", "html", "index.html")
+            if os.path.exists(p):
+                if _open_path(p):
+                    return
+                messagebox.showinfo("路径", p, parent=self.root)
+                return
+        messagebox.showinfo("提示", "尚无 HTML 总报告。\n请运行 v2.0 流水线(报告/HTML 阶段)后刷新。",
+                            parent=self.root)
+
+    def _export_zip(self):
+        from dockstudio.core import project
+        base = self.out_var.get()
+        if not base or base == OUT_FOLDER_MARKER or not os.path.isdir(base):
+            messagebox.showinfo("提示", "请先选择/确认输出目录。", parent=self.root)
+            return
+        try:
+            dest = project.export_run_zip(base)
+        except Exception as e:
+            messagebox.showerror("导出失败", str(e), parent=self.root)
+            return
+        if os.path.exists(dest):
+            self._q.put(("log", f"已打包导出: {dest}"))
+            messagebox.showinfo("导出完成",
+                                f"可复现数据包已生成(含全部源文件):\n{dest}", parent=self.root)
+        else:
+            messagebox.showerror("导出失败", "未生成 zip。", parent=self.root)
 
     def _refresh_results(self):
         base = self.out_var.get()
@@ -1087,7 +1184,8 @@ class HelpViewer:
     TOPICS = [
         ("用户手册(快速开始)", "用户手册.md"),
         ("架构设计", os.path.join("docs", "架构设计.md")),
-        ("版本定版记录", os.path.join("docs", "定版记录_v1.1.0.md")),
+        ("定版记录 v2.0.0", os.path.join("docs", "定版记录_v2.0.0.md")),
+        ("定版记录 v1.1.0", os.path.join("docs", "定版记录_v1.1.0.md")),
         ("打包说明", os.path.join("packaging", "打包说明.md")),
         ("README", "README.md"),
         ("第三方声明", "THIRD_PARTY_NOTICES.md"),
@@ -1208,6 +1306,11 @@ def main(argv=None) -> int:
     if not _TK_OK:
         # Very defensive: no tkinter present
         raise SystemExit("DockStudio GUI requires a Tk-enabled Python (tkinter).")
+    try:
+        import multiprocessing
+        multiprocessing.freeze_support()
+    except Exception:
+        pass
     root = _make_root()
     try:
         if HAVE_TTB:

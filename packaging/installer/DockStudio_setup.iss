@@ -1,6 +1,6 @@
 ; Inno Setup script for DockStudio (Eric Studio)
 ; Build:   build_installer_windows.bat
-; Output:  dist\installer\DockStudio_Setup_1.1.0.exe
+; Output:  dist\installer\DockStudio_Setup_2.0.0.exe
 ;
 ; Requires:
 ;   - Inno Setup 6 (https://jrsoftware.org/isinfo.php)  -> ISCC.exe on PATH
@@ -10,7 +10,7 @@
   #define PORT "..\..\dist\DockStudioPortable"
 #endif
 #ifndef APP_VERSION
-  #define APP_VERSION "1.1.0"
+  #define APP_VERSION "2.0.0"
 #endif
 
 #define MyAppName "DockStudio"

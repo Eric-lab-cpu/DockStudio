@@ -26,7 +26,7 @@ from dockstudio.core.pipeline import PHASES, run_project
 DEMO = os.path.join(ROOT, "examples", "demo")
 
 
-def make_cfg(out_dir: str) -> models.RunConfig:
+def make_cfg(out_dir: str, legacy: bool = False, workers: int = 1) -> models.RunConfig:
     lib = os.path.join(DEMO, "ligand_library.sdf")
     if not os.path.exists(lib):
         sys.path.insert(0, os.path.join(DEMO))
@@ -53,6 +53,12 @@ def make_cfg(out_dir: str) -> models.RunConfig:
         run_accuracy_report=True,
         ph=7.4,
         delete_bad_res=True,
+        # v2.0 mode switches: "legacy" reproduces v1.1 behaviour (all new
+        # switches off); the default runs the new-mode settings.
+        use_symmetry_rmsd=not legacy,
+        run_html_report=not legacy,
+        run_enrichment=False,      # no real active/decoy data -> never fabricated
+        n_workers=workers,
     )
     return cfg
 
@@ -62,8 +68,12 @@ def main(argv=None) -> int:
     ap.add_argument("slice_s", nargs="?", type=float, default=150.0)
     ap.add_argument("--out", default=os.path.join(ROOT, "examples", "demo_out"))
     ap.add_argument("--phases", default=",".join(PHASES))
+    ap.add_argument("--legacy", action="store_true",
+                    help="run with v1.1-equivalent switches (all new ones off)")
+    ap.add_argument("--workers", type=int, default=1,
+                    help="process-pool workers for the new-mode smoke (>1)")
     args = ap.parse_args(argv)
-    cfg = make_cfg(args.out)
+    cfg = make_cfg(args.out, legacy=args.legacy, workers=args.workers)
     phases = [p for p in args.phases.split(",") if p]
 
     def log(m):

@@ -81,10 +81,16 @@ def write_methods_report(cfg, out_dir: str, env: dict, inventory_summary: dict,
     L.append(f"- Vina scoring: `vina`; screening exhaustiveness={cfg.exhaustiveness}; "
              f"refinement exhaustiveness={cfg.refine_exhaustiveness}; n_poses={cfg.n_poses}; "
              f"energy_range={cfg.energy_range}; Top-K={cfg.top_k}")
+    L.append(f"- 并行/吞吐(v2.0): n_workers={cfg.n_workers}(>1 表示用进程池并行对接,"
+             f"每个 worker 用 cfg.cpu={cfg.cpu} 线程;=1 为历史串行行为);"
+             f"按配体断点续跑(done.flag);时间片与吞吐统计见 run_summary.json")
     L.append(f"- 配体质子化: 文档化简单规则,目标 pH={cfg.ph}(羧酸 pH≥5 去质子化;"
              f"碱性胺 pH≤8.5 质子化)。非 pKa 预测,见质量评估报告局限。")
     L.append("- 随机种子: 每对 `crc32('<receptor>|<ligand>') & 0x7fffffff`(写入各 result.json)")
-    L.append(f"- 批处理: 断点续跑(done.flag), 幂等续跑; cpu={cfg.cpu}")
+    L.append(f"- RMSD 方法(v2.0): 对称性感知 RMSD 为主口径,对称等价类来自参考分子图的"
+             f" Weisfeiler-Lehman 颜色细化(忽略键级/电荷,共振等价氧视为同类);"
+             f"同元素贪心最近邻值保留为对比列;对称性不可用时会如实退化(见 "
+             f"`selfdock_summary.csv` 的 `rmsd_method`/`symmetry_used`)。")
     L.append("\n## 6. 完成的对接任务\n")
     L.append(f"- 初筛完成对子数:{len(results)}(含 pre-exist 幂等跳过)")
     L.append(f"- 精修完成对子数:{len(refine_res)}")
@@ -97,6 +103,26 @@ def write_methods_report(cfg, out_dir: str, env: dict, inventory_summary: dict,
     L.append(_fmt_rows_csv(os.path.join(out_dir, "results", "selfdock_summary.csv")))
     L.append("\n## 8. 相互作用分析\n")
     L.append(_fmt_rows_csv(os.path.join(out_dir, "results", "plip", "plip_interactions_all.csv")))
+    L.append("\n## 8.5 富集度验证(ROC/AUC/EF,如启用)\n")
+    ej = os.path.join(out_dir, "results", "enrichment", "enrichment_summary.json")
+    if cfg.run_enrichment and os.path.exists(ej):
+        try:
+            ed = utils.read_json(ej)
+            for rec, s in (ed.get("receptors") or {}).items():
+                auc = s.get("auc")
+                L.append(f"- 受体 `{rec}`: AUC={auc if auc is not None else 'n/a'}; "
+                         f"EF1%={s.get('ef1')}; EF5%={s.get('ef5')}; "
+                         f"活性计分/标记={s.get('n_active_scored')}/{s.get('n_active_labels')}; "
+                         f"诱饵计分/标记={s.get('n_decoy_scored')}/{s.get('n_decoy_labels')}")
+            attr = ed.get("label_attrition") or {}
+            L.append(f"- 标签流失(已标记但无对接得分): 活性={attr.get('active', 0)}, "
+                     f"诱饵={attr.get('decoy', 0)}。标签按规范 SMILES 匹配;得分为真实 "
+                     f"mode-1 Vina 亲和力(refine 优先,否则 screening)。方法学以"
+                     f" `results/enrichment/` 下文件与 HTML 总报告为准。")
+        except Exception as e:
+            L.append(f"- 富集度摘要读取失败(如实记录): {e}")
+    else:
+        L.append("- 未启用或未提供活性/诱饵数据(绝不自动生成)。")
     L.append("\n## 9. 已执行/未执行的说明\n")
     L.append("本报告只记录本目录中真实生成的文件与参数;任何未执行的步骤不在此列出。")
     L.append("\n## 10. 平台约束\n")
@@ -149,7 +175,9 @@ def write_quality_report(cfg, out_dir: str, checks: List[dict],
         L.append("\n## 2. 共晶配体回贴(self-dock)一致性\n")
         L.extend("- " + x for x in sd_lines)
         L.append("\n> 阈值:mode-1 RMSD <= 2.0 A 视为通过。RMSD 为同一笛卡尔坐标系下"
-                 "重原子匹配(无重新叠加),见 `03_accuracy_assessment.md`。")
+                 "重原子匹配(无重新叠加),见 `03_accuracy_assessment.md`。\n"
+                 "> RMSD 主口径为对称性感知(等价类内原子互换不计);若 `selfdock_summary.csv` "
+                 "中 `symmetry_used=no`,表示对称性感知不可用、已如实退回同元素贪心最近邻。")
     L.append("\n## 3. 已发现并修正的错误\n")
     L.append("- 以实际工作日志为准;本报告列出已知记录缺口,不做虚构。")
     L.append("\n## 4. 记录缺口(如存在)\n")
@@ -236,6 +264,11 @@ def write_readme(out_dir: str, cfg, env: dict) -> str:
         "- `results/pymol_data/*/scene.pml` + `complex.pdb`:可编辑 ASCII PyMOL 源",
         "- `results/pse/*.pse`:PyMOL 会话(如启用)",
         "- `reports/`:方法与质量报告",
+        "- `reports/03_accuracy_assessment.md` + `accuracy_*.csv`:对接准确性评估(启用时)",
+        "- `reports/html/index.html`:交互式 HTML 总报告(v2.0,md 的姊妹件)",
+        "- `results/html_viewers/*.html`:Top-K 复合物交互式 3D 查看器(v2.0)",
+        "- `results/enrichment/`:ROC/AUC/EF 富集度验证(启用并给活性/诱饵时)",
+        "- `run_summary.json`:阶段统计与吞吐(v2.0)",
         "",
         "详细方法见 `reports/01_methods_report.md`;质量评估见 `reports/02_quality_assessment.md`;",
         "对接准确性评估(启用时)见 `reports/03_accuracy_assessment.md`。",

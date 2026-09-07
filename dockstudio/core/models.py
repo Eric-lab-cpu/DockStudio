@@ -17,11 +17,15 @@ from .._version import (
     DEFAULT_ENERGY_RANGE,
     DEFAULT_EXHAUSTIVENESS,
     DEFAULT_N_POSES,
+    DEFAULT_N_WORKERS,
     DEFAULT_PH,
     DEFAULT_REFINE_EXHAUSTIVENESS,
     DEFAULT_RUN_ACCURACY_REPORT,
+    DEFAULT_RUN_ENRICHMENT,
+    DEFAULT_RUN_HTML_REPORT,
     DEFAULT_TOP_K,
     DEFAULT_TOP_REFINE,
+    DEFAULT_USE_SYMMETRY_RMSD,
 )
 
 #: standard L-amino acids (3-letter). Modified residues are mapped below.
@@ -149,6 +153,16 @@ class RunConfig:
     run_accuracy_report: bool = DEFAULT_RUN_ACCURACY_REPORT
     overwrite: bool = False
 
+    # v2.0 — validation / throughput / report switches (all default off except
+    # the symmetry-aware RMSD and HTML sibling report, which add information and
+    # never change historical file names). Old config.json files load unchanged.
+    run_enrichment: bool = DEFAULT_RUN_ENRICHMENT
+    actives_path: str = ""          # experimental known-actives: SDF / SMILES / CSV
+    decoys_path: str = ""           # (putative) inactive decoys: SDF / SMILES / CSV
+    use_symmetry_rmsd: bool = DEFAULT_USE_SYMMETRY_RMSD
+    run_html_report: bool = DEFAULT_RUN_HTML_REPORT
+    n_workers: int = DEFAULT_N_WORKERS  # >1 enables the process-pool docking stage
+
     # validation helpers
     delete_bad_res: bool = True
     max_box_axis: float = 32.0
@@ -210,6 +224,10 @@ def project_subdirs(out_dir: str) -> dict:
         "lig2d": os.path.join(out_dir, "results", "ligand_2D"),
         "plip": os.path.join(out_dir, "results", "plip"),
         "reports": os.path.join(out_dir, "reports"),
+        # v2.0 additions (new directories only; never re-order the existing ones)
+        "html_report": os.path.join(out_dir, "reports", "html"),
+        "html_viewers": os.path.join(out_dir, "results", "html_viewers"),
+        "enrichment": os.path.join(out_dir, "results", "enrichment"),
     }
 
 
