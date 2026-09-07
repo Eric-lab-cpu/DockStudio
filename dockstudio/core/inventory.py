@@ -15,6 +15,7 @@ from .ligand import (
     analyze_molecule,
     is_smiles_source,
     iter_molecules,
+    library_mol_name,
     read_smiles_records,
 )
 from .utils import md5_file
@@ -61,15 +62,16 @@ def inventory_receptor(pdb_path: str, name: str, selected_chains: List[str]) -> 
 
 def inventory_ligand_sdf(sdf_path: str, name: str) -> List[dict]:
     out = []
+    base = name or os.path.splitext(os.path.basename(sdf_path))[0]
     for i, mol in iter_molecules(sdf_path):
-        nm = name if name else os.path.splitext(os.path.basename(sdf_path))[0]
+        lig_id = library_mol_name(base, i)
         if mol is None:
-            out.append({"ligand_id": f"{nm}_mol{i}", "source_file": os.path.basename(sdf_path),
+            out.append({"ligand_id": lig_id, "source_file": os.path.basename(sdf_path),
                         "index_in_sdf": i, "formula": "", "MW": "", "formal_charge": "",
                         "rotatable_bonds": "", "heavy_atoms": "", "fragments": "",
                         "has_3D": "", "sanitized": "no", "warnings": "unparseable"})
             continue
-        entry = analyze_molecule(mol, f"{nm}_mol{i}", sdf_path, i)
+        entry = analyze_molecule(mol, lig_id, sdf_path, i)
         d = entry.to_row()
         d["warnings"] = "; ".join(entry.warnings)
         out.append(d)
@@ -82,7 +84,7 @@ def inventory_ligand_smiles(path: str, name: str) -> List[dict]:
     out = []
     for rec in read_smiles_records(path):
         smi = rec["smiles"]
-        lig_id = f"{base}_{rec['index']}"
+        lig_id = library_mol_name(base, rec["index"], rec.get("name") or "")
         try:
             mol = Chem.MolFromSmiles(smi)
         except Exception:

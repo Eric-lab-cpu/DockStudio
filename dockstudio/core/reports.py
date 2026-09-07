@@ -115,10 +115,12 @@ def write_methods_report(cfg, out_dir: str, env: dict, inventory_summary: dict,
                          f"活性计分/标记={s.get('n_active_scored')}/{s.get('n_active_labels')}; "
                          f"诱饵计分/标记={s.get('n_decoy_scored')}/{s.get('n_decoy_labels')}")
             attr = ed.get("label_attrition") or {}
+            ovl = ed.get("overlap_active_decoy", 0)
             L.append(f"- 标签流失(已标记但无对接得分): 活性={attr.get('active', 0)}, "
-                     f"诱饵={attr.get('decoy', 0)}。标签按规范 SMILES 匹配;得分为真实 "
-                     f"mode-1 Vina 亲和力(refine 优先,否则 screening)。方法学以"
-                     f" `results/enrichment/` 下文件与 HTML 总报告为准。")
+                     f"诱饵={attr.get('decoy', 0)};活性/诱饵重叠并剔除数={ovl}。"
+                     f"标签按中性化规范 SMILES 匹配(pH 质子化形式与中性标签视为同一分子);"
+                     f"得分为初筛(单阶段)mode-1 Vina 亲和力,不与精修混用以避免富集度虚高。"
+                     f"方法学以 `results/enrichment/` 下文件与 HTML 总报告为准。")
         except Exception as e:
             L.append(f"- 富集度摘要读取失败(如实记录): {e}")
     else:

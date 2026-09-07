@@ -10,12 +10,17 @@ for, and it is computed from *real* docking scores only.
 
 Method (reported honestly)
 --------------------------
-* Labels are attached to docked molecules by **canonical isomeric SMILES**
-  (actives / decoys files may be SDF, SMILES or CSV). Molecules that docked but
-  were not labelled are ignored (they carry no ground truth); labels that did
-  not produce a docking score are counted and reported as attrition.
-* The per-molecule score is the **mode-1 Vina affinity** of the refined run
-  when available, otherwise the screening run (a ``source`` column records it).
+* Labels are attached to docked molecules by **canonical isomeric SMILES of the
+  neutralised molecule** (actives / decoys files may be SDF, SMILES or CSV).
+  Neutralisation makes the matching robust to DockStudio's pH protonation
+  (R-COO- / R-NH3+ vs the neutral label), otherwise every ionizable compound
+  would be falsely counted as label attrition.  Molecules that docked but were
+  not labelled are ignored (they carry no ground truth); labels that did not
+  produce a docking score are counted and reported as attrition.
+* The per-molecule score is the **screening mode-1 Vina affinity** - one single,
+  consistent docking stage across the whole library.  Refined shortlist energies
+  are deliberately not mixed in (refinement re-docks only the best-scoring
+  subset, so mixing would inflate the enrichment statistics).
   Scores are ranked best-first (more negative affinity = better).
 * ROC curve / AUC: standard rank-based (Mann-Whitney) AUC with average ranks
   for ties. EF1%/EF5% = (fraction of actives found in the top 1%/5% of the
@@ -53,12 +58,44 @@ EF_PERCENTILES = (1.0, 5.0)  # EF1%, EF5%
 # ---------------------------------------------------------------------------
 # molecule identity (canonical SMILES)
 # ---------------------------------------------------------------------------
+def _make_uncharger():
+    """Return an RDKit Uncharger across rdkit builds/module layouts."""
+    try:
+        from rdkit.Chem import rdMolStandardize
+        return rdMolStandardize.Uncharger()
+    except Exception:
+        from rdkit.Chem import MolStandardize
+        return MolStandardize.rdMolStandardize.Uncharger()
+
+
+_UNCHARGER = None
+
+
 def canonical_smiles(mol: Chem.Mol) -> str:
+    """Canonical isomeric SMILES of the *neutralised* molecule.
+
+    DockStudio protonates ligands before docking (simple pH rules: carboxylates
+    become R-COO-, basic amines R-NH3+).  A docked molecule must therefore be
+    matched to its label on the neutralised heavy-atom graph, otherwise every
+    ionizable compound would be counted as "not docked / label lost" even though
+    it clearly is present.  Neutralisation keeps stereochemistry (isomeric
+    SMILES) but removes formal charges before the canonical string is built.
+    """
     try:
         m = Chem.RemoveHs(Chem.Mol(mol))
+        global _UNCHARGER
+        if _UNCHARGER is None:
+            _UNCHARGER = _make_uncharger()
+        try:
+            m = _UNCHARGER.uncharge(m)
+        except Exception:
+            pass
         return Chem.MolToSmiles(m, isomericSmiles=True)
     except Exception:
-        return ""
+        try:
+            return Chem.MolToSmiles(Chem.RemoveHs(Chem.Mol(mol)), isomericSmiles=True)
+        except Exception:
+            return ""
 
 
 def mols_from_sdf(path: str):
@@ -103,20 +140,37 @@ def _affinity_of(res: dict) -> Optional[float]:
 
 
 def smiles_of_ligand(meta: dict, cache: Dict[str, str]) -> str:
-    """Canonical SMILES of a prepared ligand, from its source smiles or prep SDF."""
-    s = meta.get("smiles") or cache.get(meta.get("name", "")) or ""
+    """Neutralised canonical SMILES of a prepared ligand.
+
+    Source order: cached -> source SMILES (canonicalised) -> prepared SDF
+    (canonicalised).  Returning the raw input SMILES string would break matching
+    against the (canonicalised) label set, so the source string is always
+    canonicalised here.
+    """
+    key = meta.get("name", "")
+    if key in cache:
+        return cache[key]
+    cs = ""
+    s = meta.get("smiles") or ""
     if s:
-        return s
-    prep = meta.get("prep_sdf")
-    if prep and os.path.exists(prep):
         try:
-            m = Chem.MolFromMolFile(prep, sanitize=True, removeHs=True)
-            if m is not None:
-                s = canonical_smiles(m)
-                cache[meta.get("name", "")] = s
+            m = Chem.MolFromSmiles(s)
         except Exception:
-            s = ""
-    return s
+            m = None
+        if m is not None:
+            cs = canonical_smiles(m)
+    if not cs:
+        prep = meta.get("prep_sdf")
+        if prep and os.path.exists(prep):
+            try:
+                m = Chem.MolFromMolFile(prep, sanitize=True, removeHs=True)
+                if m is not None:
+                    cs = canonical_smiles(m)
+            except Exception:
+                cs = ""
+    if cs and key:
+        cache[key] = cs
+    return cs
 
 
 def docked_scores_by_receptor(
@@ -126,16 +180,14 @@ def docked_scores_by_receptor(
 ) -> Dict[str, Dict[str, dict]]:
     """Map each receptor to ``{canonical_smiles: {"score": float, "source": str}}``.
 
-    ``score`` = refined mode-1 affinity when that ligand was refined, otherwise
-    the screening mode-1 affinity (this is the honest "what we would rank by").
+    ``score`` is the **screening** mode-1 Vina affinity (a single, consistent
+    docking stage across the whole library).  Refined shortlist energies are
+    deliberately NOT mixed in: refinement only re-docks the best-scoring subset,
+    so using "refine if available else screening" would systematically favour the
+    best-scoring compounds (usually the actives) and inflate the enrichment
+    statistics.
     """
     sub = project_subdirs(out_dir)
-    # best affinity per (receptor, ligand) from refine first (small), then screening
-    refine_best: Dict[tuple, float] = {}
-    for res in batch.iter_results(sub["refine"]):
-        a = _affinity_of(res)
-        if a is not None:
-            refine_best[(res.get("receptor"), res.get("ligand"))] = a
     screen_best: Dict[tuple, float] = {}
     for res in batch.iter_results(sub["screening"]):
         a = _affinity_of(res)
@@ -144,23 +196,16 @@ def docked_scores_by_receptor(
 
     cache: Dict[str, str] = {}
     per_rec: Dict[str, Dict[str, dict]] = {}
-    rec_names = [r["name"] for r in cfg.receptors]
-    # iterate over the union of screened pairs
-    seen_pairs = set(screen_best) | set(refine_best)
-    for rec, lig in seen_pairs:
+    for (rec, lig), score in screen_best.items():
         if rec not in per_rec:
             per_rec[rec] = {}
         meta = lig_meta.get(lig) or {}
         smi = smiles_of_ligand(meta, cache) if lig else ""
         if not smi:
             continue
-        if (rec, lig) in refine_best:
-            score, source = refine_best[(rec, lig)], "refine"
-        else:
-            score, source = screen_best[(rec, lig)], "screening"
         existing = per_rec[rec].get(smi)
         if existing is None or score < existing["score"]:
-            per_rec[rec][smi] = {"score": score, "source": source}
+            per_rec[rec][smi] = {"score": score, "source": "screening"}
     return per_rec
 
 
@@ -299,7 +344,15 @@ def build_enrichment_report(cfg: RunConfig, out_dir: str, lig_meta: Dict[str, di
 
     actives = set(read_label_smiles(cfg.actives_path))
     decoys = set(read_label_smiles(cfg.decoys_path))
-    _log(f"[enrich] labels: {len(actives)} actives, {len(decoys)} decoys")
+    overlap = actives & decoys
+    if overlap:
+        # a molecule in both lists cannot be a clean positive and a clean
+        # negative; treat it as active and disclose the removal.
+        decoys = decoys - actives
+        _log(f"[enrich] WARNING: {len(overlap)} molecule(s) present in BOTH actives and "
+             f"decoys; counted as active (removed from decoys) and disclosed in the summary.")
+    _log(f"[enrich] labels: {len(actives)} actives, {len(decoys)} decoys "
+         f"(overlap removed: {len(overlap)})")
 
     sub = project_subdirs(out_dir)
     os.makedirs(sub["enrichment"], exist_ok=True)
@@ -381,7 +434,7 @@ def build_enrichment_report(cfg: RunConfig, out_dir: str, lig_meta: Dict[str, di
                    "roc_svg": os.path.basename(svg_path),
                    "roc_csv": os.path.basename(roc_path),
                    "molecules_csv": os.path.basename(dec_path),
-                   "scoring": "refine mode-1 Vina affinity if available, else screening"}
+                   "scoring": "screening mode-1 Vina affinity (single consistent stage)"}
         rec_summaries[rec] = summary
         all_rows_csv.append(summary)
         for row in dec_rows:
@@ -392,11 +445,15 @@ def build_enrichment_report(cfg: RunConfig, out_dir: str, lig_meta: Dict[str, di
     summary_path = os.path.join(sub["enrichment"], "enrichment_summary.json")
     utils.write_json({"enabled": True, "receptors": rec_summaries,
                       "label_attrition": label_attrition,
+                      "overlap_active_decoy": len(overlap),
                       "actives_file": cfg.actives_path,
                       "decoys_file": cfg.decoys_path,
                       "method": "ROC/AUC(Mann-Whitney, avg-rank ties); EF1%/5%; "
-                                "labels matched by canonical isomeric SMILES; "
-                                "score = mode-1 Vina affinity (refine else screening)"},
+                                "labels matched by canonical isomeric SMILES of the "
+                                "NEUTRALISED molecule (pH protomers are matched on the "
+                                "charge-free graph); score = screening mode-1 Vina "
+                                "affinity (single consistent stage, not mixed with "
+                                "refined shortlist energies)"},
                       summary_path)
     if all_rows_csv:
         csv_path = os.path.join(sub["enrichment"], "enrichment_summary.csv")
@@ -408,5 +465,6 @@ def build_enrichment_report(cfg: RunConfig, out_dir: str, lig_meta: Dict[str, di
 
     return {"enabled": True, "receptors": rec_summaries,
             "label_attrition": label_attrition,
+            "overlap_active_decoy": len(overlap),
             "summary_json": summary_path,
             "auc": next((v["auc"] for v in rec_summaries.values() if v["auc"] is not None), None)}

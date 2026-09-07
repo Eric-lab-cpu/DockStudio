@@ -105,11 +105,14 @@ def parse_ccd(path: str) -> CCD:
             arom = (toks[6] if len(toks) > 6 else "?") == "Y"
             cc.atoms.append(CCDAtom(atom_id, elem, charge, x, y, z, arom))
         elif len(toks) >= 7 and toks[0].upper() == cc.comp_id.upper() and atom_cols:
-            # bond rows: comp_id atom1 atom2 order aromatic stereo ordinal
+            # bond rows: comp_id atom1 atom2 value_order aromatic stereo ordinal
             try:
-                order_s = toks[3]
-                order = {"single": 1, "double": 2, "triple": 3, "aromatic": 1, "deloc": 1}.get(order_s, 1)
-                arom = toks[4] == "Y" or order_s == "aromatic"
+                order_s = toks[3].upper()
+                # CCD value_order codes are upper-case: SING/DOUB/TRIP/AROM/DELO
+                order = {"SING": 1, "SINGLE": 1, "DOUB": 2, "DOUBLE": 2,
+                         "TRIP": 3, "TRIPLE": 3, "AROM": 1, "AROMATIC": 1,
+                         "DELO": 1}.get(order_s, 1)
+                arom = toks[4] == "Y" or order_s in ("AROM", "AROMATIC")
                 cc.bonds.append(CCDBond(toks[1], toks[2], order, arom))
             except Exception:
                 pass
@@ -171,9 +174,10 @@ def _parse_ccd_phase2(lines: List[str], comp_id: str) -> CCD:
                 if not row:
                     continue
                 try:
-                    os_ = row[idx["value_order"]]
-                    order = {"single": 1, "double": 2, "triple": 3}.get(os_, 1)
-                    arom = row[idx["pdbx_aromatic_flag"]] == "Y" or os_ == "aromatic"
+                    os_ = row[idx["value_order"]].upper()
+                    order = {"SING": 1, "SINGLE": 1, "DOUB": 2, "DOUBLE": 2,
+                             "TRIP": 3, "TRIPLE": 3}.get(os_, 1)
+                    arom = row[idx["pdbx_aromatic_flag"]] == "Y" or os_ in ("AROM", "AROMATIC")
                     cc.bonds.append(CCDBond(row[idx["atom_id_1"]], row[idx["atom_id_2"]], order, arom))
                 except (KeyError, ValueError, IndexError):
                     continue

@@ -1,6 +1,7 @@
 """Unit tests for enrichment ROC/AUC/EF (v2.0 feature #16)."""
 
 import numpy as np
+from rdkit import Chem
 
 from dockstudio.core import enrich
 
@@ -40,6 +41,20 @@ def test_roc_points_monotone():
     # last point should reach (1,1)
     assert res["roc_points"][-1][0] == pytest_approx(1.0)
     assert res["roc_points"][-1][1] == pytest_approx(1.0)
+
+
+def test_canonical_smiles_neutralises_ph_protomers():
+    """The pH-protonated docked form and the neutral label must match."""
+    assert enrich.canonical_smiles(Chem.MolFromSmiles("CCN")) == \
+        enrich.canonical_smiles(Chem.MolFromSmiles("CC[NH3+]"))
+    assert enrich.canonical_smiles(Chem.MolFromSmiles("CC(=O)O")) == \
+        enrich.canonical_smiles(Chem.MolFromSmiles("CC(=O)[O-]"))
+
+
+def test_canonical_smiles_keeps_stereochemistry():
+    a = enrich.canonical_smiles(Chem.MolFromSmiles("C[C@@H](N)C(=O)O"))
+    b = enrich.canonical_smiles(Chem.MolFromSmiles("C[C@H](N)C(=O)O"))
+    assert a != b and a  # both non-empty and different for the two enantiomers
 
 
 def pytest_approx(v, rel=1e-6):

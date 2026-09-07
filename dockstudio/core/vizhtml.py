@@ -359,7 +359,8 @@ def build_html_report(cfg, out_dir: str, log=None) -> dict:
                                f"<div>{_roc_svg_inline(svg_path)}</div>")
         enrich_html = f"""
 <h2 id="enrich">富集度验证(ROC/AUC/EF)</h2>
-<p>仅当提供已知活性/诱饵数据时生成;数据来自真实对接得分(refine 优先,否则 screening),标签按规范 SMILES 匹配。方法学详见 md 报告。</p>
+<p>仅当提供已知活性/诱饵数据时生成;得分为初筛(单阶段)mode-1 Vina 亲和力(不与精修混用),
+标签按中性化规范 SMILES 匹配。方法学详见 md 报告。</p>
 <table><thead><tr><th>受体</th><th>AUC</th><th>EF1%</th><th>EF5%</th>
 <th>活性(计分/标记)</th><th>诱饵(计分/标记)</th></tr></thead><tbody>
 {''.join(sec_rows)}</tbody></table>{roc_tables}"""

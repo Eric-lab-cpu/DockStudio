@@ -117,19 +117,45 @@ _CARBOXYL_DEPROTONATE_PH = 5.0
 _BASIC_N_PROTONATE_PH = 8.5
 
 
+def library_mol_name(base: str, index: int, name_hint: str = "") -> str:
+    """Deterministic ligand id used by BOTH inventory and preparation.
+
+    Keeping one naming function here guarantees ``ligand_list.csv`` ids match the
+    ``<REC>__<LIG>`` docking directories / results exactly.  NOTE: an empty
+    ``name_hint`` must fall through to the ``base_index`` scheme; it must not be
+    treated as a real name (``utils.safe_name("")`` returns the placeholder
+    "mol", which would make every unnamed molecule collide).
+    """
+    if name_hint and name_hint.strip():
+        return utils.safe_name(name_hint)
+    return f"{utils.safe_name(base)}_{index}"
+
+
 def apply_ph_rules(mol: Chem.Mol, ph: float) -> Chem.Mol:
     """Documented simple pH rules (see report; no pKa predictor used)."""
-    mol = Chem.Mol(mol)
+    mol = Chem.RWMol(Chem.Mol(mol))
     Chem.SanitizeMol(mol)
+    Chem.GetSymmSSSR(mol)  # initialise ring info (aromatic SMARTS need it)
     notes = []
     if ph >= _CARBOXYL_DEPROTONATE_PH:
+        # SMARTS atoms: [0]=CX3 carbon, [1]=carbonyl O (=O), [2]=hydroxyl O-H.
+        deprot_o: List[int] = []
+        deprot_h: List[int] = []
         for m in mol.GetSubstructMatches(_CARBOXYL):
-            ox = mol.GetAtomWithIdx(m[1])
-            h = [a for a in ox.GetNeighbors() if a.GetSymbol() == "H"]
-            for a in h:
-                mol.RemoveAtom(a.GetIdx())
-            if h:
-                notes.append(f"carboxyl deprotonated (COO-) [pH {ph} >= {_CARBOXYL_DEPROTONATE_PH:g}]")
+            ox = mol.GetAtomWithIdx(m[2])
+            hs = [a.GetIdx() for a in ox.GetNeighbors() if a.GetSymbol() == "H"]
+            if hs:
+                deprot_o.append(m[2])
+                deprot_h.extend(hs)
+        if deprot_h:
+            for oi in set(deprot_o):
+                mol.GetAtomWithIdx(oi).SetFormalCharge(-1)
+            # remove the hydroxyl hydrogens (indices shift on removal -> descending)
+            for hi in sorted(set(deprot_h), reverse=True):
+                mol.RemoveAtom(hi)
+            Chem.GetSymmSSSR(mol)  # atom removal invalidates ring info
+            notes.append(f"carboxyl deprotonated (COO-) [{len(set(deprot_o))} group(s), "
+                         f"pH {ph} >= {_CARBOXYL_DEPROTONATE_PH:g}]")
     mol.UpdatePropertyCache()
     seen = set()
     if ph <= _BASIC_N_PROTONATE_PH:
@@ -222,7 +248,7 @@ def prepare_ligand_library(
     entries: List[LigandEntry] = []
     base = library_name or os.path.splitext(os.path.basename(sdf_path))[0]
     for i, mol in iter_molecules(sdf_path):
-        name = f"{utils.safe_name(base)}_{i}"
+        name = library_mol_name(base, i)
         if mol is None:
             entries.append(LigandEntry(source=sdf_path, index=i, name=name,
                                        sanitized=False, warnings=["unparseable SDF record"]))
@@ -340,10 +366,7 @@ def read_smiles_records(path: str) -> List[dict]:
 
 
 def _entry_name(base: str, rec: dict) -> str:
-    hint = utils.safe_name(rec.get("name") or "")
-    if hint:
-        return hint
-    return f"{base}_{rec['index']}"
+    return library_mol_name(base, rec["index"], rec.get("name") or "")
 
 
 def prepare_smiles_library(

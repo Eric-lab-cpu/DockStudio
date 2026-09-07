@@ -67,8 +67,6 @@ def run_qc(cfg: models.RunConfig, out_dir: str) -> List[dict]:
     checks.append({"check": "all screening done.flags present",
                    "ok": n_screen >= len(cfg.receptors) * len([l for l in _ligand_names(cfg)]),
                    "detail": f"screening done flags={n_screen}"})
-    checks.append({"check": "refinement done.flags present", "ok": n_refine >= 0,
-                   "detail": f"refine done flags={n_refine}"})
 
     # matrix vs screening results
     results = batch.collect_results(screening_dir)
@@ -83,6 +81,22 @@ def run_qc(cfg: models.RunConfig, out_dir: str) -> List[dict]:
         iss = check_matrix_vs_results(mat, results)
         checks.append({"check": "screening matrix vs result.json", "ok": not iss,
                        "detail": "; ".join(iss[:5]) or "consistent"})
+    # refinement done flags vs the expected shortlist size (per receptor,
+    # top_refine ligands per scored set), computed from the screening matrix.
+    if results:
+        expected_refine = 0
+        for rec in cfg.receptor_names:
+            row = mat.get(rec, {})
+            n_scored = sum(1 for v in row.values() if v is not None)
+            expected_refine += min(max(1, int(cfg.top_refine)), n_scored)
+        if cfg.run_refine is False:
+            expected_refine = 0
+        ok_refine = (n_refine >= expected_refine) if expected_refine else True
+        detail = f"refine done flags={n_refine} (expected>={expected_refine})"
+        if expected_refine and n_refine < expected_refine:
+            detail += f"; missing {expected_refine - n_refine}"
+        checks.append({"check": "refinement done.flags present", "ok": ok_refine,
+                       "detail": detail})
     k = max(1, int(cfg.top_k))
     csv_path = os.path.join(out_dir, "results", f"final_top{k}.csv")
     json_path = os.path.join(out_dir, "results", f"_final_top{k}.json")
