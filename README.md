@@ -88,14 +88,14 @@ python -m dockstudio
 
 发表论文或预印本时可按如下格式引用(各期刊风格可微调):
 
-> Eric Studio. DockStudio: 一站式自动化批量分子对接平台(版本 2.0.0). Zenodo/GitHub.
-> 2026. https://github.com/Eric-lab-cpu/DockStudio
+> Eric Studio. DockStudio: 一站式自动化批量分子对接平台(版本 2.0.0).
+> Zenodo, 2026. https://doi.org/10.5281/zenodo.22655142
 
-仓库根含机器可读的 **`CITATION.cff`**(Zenodo 会据此生成引文)。要获得 **DOI**:
-把仓库推送到 GitHub 并创建 Release(如 `v2.0.0`)→ 用 GitHub 账号登录
-[Zenodo](https://zenodo.org) → 在 GitHub 设置里开启该仓库 → Zenodo 会为每个
-Release 铸一个 DOI → 把 DOI 回填到 `CITATION.cff` 的 `doi:` 字段并重新提交。
-(软件本身不自动执行 DOI 注册;DOI 注册动作由作者在 Zenodo 完成。)
+仓库根含机器可读的 **`CITATION.cff`**(Zenodo 会据此生成引文)。
+v2.0.0 已注册 DOI **10.5281/zenodo.22655142**(记录族 concept DOI
+`10.5281/zenodo.22655141`)。后续每个新版本:推 GitHub Release → Zenodo 自动铸新
+版本 DOI → 把新 DOI 回填到 `CITATION.cff` 的 `doi:` 字段并重新提交。
+(软件本身不自动执行 DOI 注册;DOI 由作者在 Zenodo 开启 GitHub 集成后自动/手动完成。)
 
 ## 无头冒烟测试(不需要 GUI)
 

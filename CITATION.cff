@@ -2,19 +2,13 @@ cff-version: 1.2.0
 message: "If you use DockStudio in your research, please cite it as follows."
 # ---------------------------------------------------------------------------
 # Citation metadata for DockStudio.
-#
-# To register a DOI:
-#   1. Push this repository to GitHub and create a Release for the version you
-#      publish (https://github.com/Eric-lab-cpu/DockStudio/releases).
-#   2. Log in to Zenodo (https://zenodo.org) with your GitHub account and enable
-#      the repository under "GitHub -> Settings". Zenodo will mint a DOI for
-#      each GitHub Release.
-#   3. Paste the DOI below (uncomment the `doi:` line) and commit, or keep this
-#      file as-is and cite the software by its GitHub URL / version.
+# v2.0.0 DOI registered on Zenodo (2026-09-08). The concept DOI of the whole
+# record family is 10.5281/zenodo.22655141 (each future release gets its own
+# version DOI under that concept).
 # ---------------------------------------------------------------------------
 title: "DockStudio: 一站式自动化批量分子对接平台"
 abbreviation: DockStudio
-# doi: 10.5281/zenodo.0000000   # <-- paste Zenodo DOI after registration
+doi: 10.5281/zenodo.22655142
 url: "https://github.com/Eric-lab-cpu/DockStudio"
 authors:
   - name: "Eric Studio"
